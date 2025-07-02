@@ -1,9 +1,9 @@
 from presidio_analyzer import AnalyzerEngine, PatternRecognizer, Pattern
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine, OperatorConfig
-import fileHandler as fH  # Import the mock fileHandler
+import fileHandler as fH  
 from groq import Groq
-import os  # Import os for environment variables (best practice)
+import os  
 
 
 class chk:
