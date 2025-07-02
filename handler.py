@@ -1,737 +1,658 @@
-import sys, os, shutil, tempfile, json, time, hashlib, requests
-from datetime import datetime
-from typing import Union
+import sys
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLineEdit, QTextEdit, QFileDialog, QTabWidget,
-    QProgressBar, QMessageBox, QRadioButton, QGroupBox, QCheckBox,
-    QLabel, QSlider, QScrollArea
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
+    QLineEdit, QTextEdit, QLabel, QFileDialog, QMessageBox, QTabWidget, QSizePolicy, QCheckBox
 )
-from PyQt5.QtCore import QThread, pyqtSignal, Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
-
-# --- Mocking External Libraries for Demonstration ---
-# Replace these with your actual Presidio, XposedOrNot, HIBP integrations
-# For a real application, ensure you have 'presidio-analyzer', 'requests' installed
-# and proper API keys for HIBP if needed.
-
-class MockAnalyzer:
-    """A mock Presidio analyzer for demonstration purposes."""
-
-    def analyze(self, text, entities=None):
-        results = []
-        # Simulate finding sensitive data
-        if "secret_key_123" in text:
-            results.append({"entity_type": "API_KEY", "start": text.find("secret_key_123"),
-                            "end": text.find("secret_key_123") + len("secret_key_123"), "score": 0.9,
-                            "text": "secret_key_123"})
-        if "john.doe@example.com" in text:
-            results.append({"entity_type": "EMAIL_ADDRESS", "start": text.find("john.doe@example.com"),
-                            "end": text.find("john.doe@example.com") + len("john.doe@example.com"), "score": 0.8,
-                            "text": "john.doe@example.com"})
-        if "breached@example.com" in text:
-            results.append({"entity_type": "EMAIL_ADDRESS", "start": text.find("breached@example.com"),
-                            "end": text.find("breached@example.com") + len("breached@example.com"), "score": 0.85,
-                            "text": "breached@example.com"})
-        if "password123" in text:
-            results.append({"entity_type": "PASSWORD", "start": text.find("password123"),
-                            "end": text.find("password123") + len("password123"), "score": 0.75, "text": "password123"})
-
-        # Filter by requested entities if provided
-        if entities:
-            results = [r for r in results if r['entity_type'] in entities]
-        return results
-
-    def set_min_score_for_entity_type(self, score):
-        print(f"Mock Analyzer: Setting min score to {score}")
-
-
-def initialize_presidio_analyzer():
-    """Initializes and returns a Presidio Analyzer (mocked for this example)."""
-    print("Initializing Presidio Analyzer...")
-    # In a real app:
-    # from presidio_analyzer import AnalyzerEngine
-    # analyzer = AnalyzerEngine()
-    # return analyzer
-    return MockAnalyzer()
-
-
-def find_sensitive_data_with_presidio(text: str, analyzer: MockAnalyzer, entities: list = None) -> list:
-    """
-    Finds sensitive data in text using Presidio Analyzer.
-    Returns a list of finding dictionaries.
-    """
-    # In a real app, you might want to map Presidio's output to your desired format
-    # For now, directly use the mock analyzer's output structure.
-    return analyzer.analyze(text, entities)
-
-
-def check_email_with_xon(email_address: str) -> dict:
-    """
-    Checks if an email address has been compromised using XposedOrNot Community API.
-    Returns a dictionary with 'breached' (bool) and 'details' (dict, if breached).
-    """
-    XON_EMAIL_API_URL = "https://api.xposedornot.com/v1/email/"
-    HEADERS = {"User-Agent": "SensitiveDataFinderGUI/1.0 (Contact: your_email@example.com)"}
-
-    try:
-        response = requests.get(f"{XON_EMAIL_API_URL}{email_address}", headers=HEADERS, timeout=5)
-        response.raise_for_status()  # Raise HTTPError for bad responses (4xx or 5xx)
-        data = response.json()
-
-        if "metrics" in data and data["metrics"]:
-            return {"breached": True, "details": data["metrics"]}
-        elif "message" in data and "No data found" in data["message"]:
-            return {"breached": False}
-        else:
-            return {"breached": False, "error": "Unexpected API response", "raw_response": data}
-
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            return {"breached": False}
-        elif e.response.status_code == 429:
-            return {"breached": False, "error": "Rate limited by XposedOrNot. Please wait."}
-        else:
-            return {"breached": False, "error": f"HTTP Error {e.response.status_code}: {e.response.text}"}
-    except requests.exceptions.RequestException as e:
-        return {"breached": False, "error": f"Network error: {e}"}
-    except ValueError:
-        return {"breached": False, "error": "Invalid JSON response from XposedOrNot."}
-
-
-def check_password_with_hibp(password: str) -> int:
-    """
-    Checks if a password has been compromised using HIBP Pwned Passwords API.
-    Returns the count of times the password was found, or -1 on error.
-    """
-    HIBP_PASSWORDS_API_URL = "https://api.pwnedpasswords.com/range/"
-    HEADERS = {
-        "User-Agent": "SensitiveDataFinderGUI/1.0 (Contact: your_email@example.com)"}  # No API key needed for this endpoint
-
-    hashed_password = hashlib.sha1(password.encode('utf-8')).hexdigest().upper()
-    prefix = hashed_password[:5]
-    suffix = hashed_password[5:]
-
-    try:
-        response = requests.get(f"{HIBP_PASSWORDS_API_URL}{prefix}", headers=HEADERS, timeout=5)
-        response.raise_for_status()
-
-        if response.status_code == 200:
-            lines = response.text.splitlines()
-            for line in lines:
-                line_suffix, count = line.split(':')
-                if line_suffix == suffix:
-                    return int(count)
-            return 0
-        elif response.status_code == 404:
-            return 0
-        else:
-            return -1  # Indicate an API error
-    except requests.exceptions.RequestException as e:
-        return -1  # Network or other request error
-
-
-# Import GitPython (assuming it's installed)
+# Import the chk class from your main_script_py file
+# Ensure main_script_py.py is in the same directory as this gui_app.py
 try:
-    from git import Repo, InvalidGitRepositoryError, GitCommandError
+    from collector import chk
 except ImportError:
-    QMessageBox.critical(None, "Import Error", "GitPython library not found. Please install it: pip install GitPython")
+    QMessageBox.critical(None, "Import Error",
+                         "Could not import 'chk' class from 'main_script_py.py'. "
+                         "Please ensure 'main_script_py.py' is in the same directory.")
     sys.exit(1)
 
 
-# --- Scanner Worker Thread ---
-class ScannerWorker(QThread):
-    """
-    Worker thread to perform scanning operations to keep the GUI responsive.
-    Emits signals for progress, findings, and completion.
-    """
-    progress_updated = pyqtSignal(int)
-    status_updated = pyqtSignal(str)
-    finding_found = pyqtSignal(dict)
-    scan_finished = pyqtSignal(str)
-    scan_error = pyqtSignal(str)
+# --- Worker Thread for PII Analysis ---
+# Running the analysis in a separate thread prevents the GUI from freezing
+# during long-running operations.
+class PIIAnalysisWorker(QThread):
+    # Signals to communicate results back to the GUI thread
+    analysis_finished = pyqtSignal(list, list)
+    analysis_error = pyqtSignal(str)
 
-    def __init__(self, scan_type: str, path: str, scan_history: bool,
-                 presidio_analyzer, settings: dict):
+    def __init__(self, indir, enable_groq_recheck):
         super().__init__()
-        self.scan_type = scan_type
-        self.path = path
-        self.scan_history = scan_history
-        self.presidio_analyzer = presidio_analyzer
-        self.settings = settings
-        self._is_running = True
-
-    def stop(self):
-        self._is_running = False
+        self.indir = indir
+        self.enable_groq_recheck = enable_groq_recheck
 
     def run(self):
-        self.status_updated.emit("Scan started...")
-        self.progress_updated.emit(0)
-        all_findings = []
         try:
-            if self.scan_type == "local_file":
-                all_findings = self._scan_local_file()
-            elif self.scan_type == "local_directory":
-                all_findings = self._scan_local_directory()
-            elif self.scan_type == "remote_git" or self.scan_type == "local_git":
-                all_findings = self._scan_git_repository()
+            # Create an instance of the chk class and run the analysis
+            analyzer = chk()
+            # Pass the enable_groq_recheck flag to the check method
+            analysis_results, anonymized_data = analyzer.check(self.indir, self.enable_groq_recheck)
 
-            summary_message = f"Scan finished. Found {len(all_findings)} sensitive items."
-            self.scan_finished.emit(summary_message)
+            # --- Debugging and Type Checking ---
+            print(f"Worker: Type of analysis_results before emit: {type(analysis_results)}")
+            print(f"Worker: Type of anonymized_data before emit: {type(anonymized_data)}")
 
+            # Ensure analysis_results is a list
+            if not isinstance(analysis_results, list):
+                print(f"Worker Warning: analysis_results is not a list. Converting to list: {type(analysis_results)}")
+                analysis_results = [str(analysis_results)]  # Convert to a list containing its string representation
+
+            # Ensure anonymized_data is a list
+            if not isinstance(anonymized_data, list):
+                print(f"Worker Warning: anonymized_data is not a list. Converting to list: {type(anonymized_data)}")
+                anonymized_data = [str(anonymized_data)]  # Convert to a list containing its string representation
+            # --- End Debugging and Type Checking ---
+
+            self.analysis_finished.emit(analysis_results, anonymized_data)
         except Exception as e:
-            self.scan_error.emit(f"An error occurred during scan: {e}")
-        finally:
-            self.progress_updated.emit(100)
-
-    def _scan_local_file(self) -> list:
-        """Scans a single local file."""
-        findings = []
-        file_path = self.path
-        if not os.path.exists(file_path) or not os.path.isfile(file_path):
-            raise ValueError(f"File not found or is not a file: {file_path}")
-
-        self.status_updated.emit(f"Scanning file: {file_path}")
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-                file_findings = find_sensitive_data_with_presidio(content, self.presidio_analyzer)
-                for f in file_findings:
-                    finding_record = self._create_finding_record(f, file_path, content)
-                    self.finding_found.emit(finding_record)
-                    findings.append(finding_record)
-        except Exception as e:
-            self.status_updated.emit(f"Error scanning file {file_path}: {e}")
-        return findings
-
-    def _scan_local_directory(self) -> list:
-        """Scans a local directory recursively."""
-        findings = []
-        if not os.path.exists(self.path) or not os.path.isdir(self.path):
-            raise ValueError(f"Directory not found or is not a directory: {self.path}")
-
-        total_files = sum([len(files) for r, d, files in os.walk(self.path)])
-        scanned_count = 0
-
-        for root, _, files in os.walk(self.path):
-            if not self._is_running: return []  # Allow stopping
-            for file_name in files:
-                if not self._is_running: return []  # Allow stopping
-                file_path_abs = os.path.join(root, file_name)
-                file_path_relative = os.path.relpath(file_path_abs, self.path)
-
-                if not self._should_scan_file(file_path_relative):
-                    self.status_updated.emit(f"Skipping: {file_path_relative}")
-                    scanned_count += 1
-                    self.progress_updated.emit(int((scanned_count / total_files) * 100))
-                    continue
-
-                self.status_updated.emit(f"Scanning: {file_path_relative}")
-                try:
-                    with open(file_path_abs, 'r', encoding='utf-8', errors='ignore') as f:
-                        content = f.read()
-                        file_findings = find_sensitive_data_with_presidio(content, self.presidio_analyzer)
-                        for f in file_findings:
-                            finding_record = self._create_finding_record(f, file_path_relative, content)
-                            self.finding_found.emit(finding_record)
-                            findings.append(finding_record)
-                except Exception as e:
-                    self.status_updated.emit(f"Error scanning {file_path_relative}: {e}")
-
-                scanned_count += 1
-                self.progress_updated.emit(int((scanned_count / total_files) * 100))
-        return findings
-
-    def _scan_git_repository(self) -> list:
-        """Scans a Git repository (local or remote, with optional history)."""
-        findings = []
-        temp_repo_dir = None
-        repo = None
-
-        try:
-            if self.scan_type == "local_git":
-                if not os.path.exists(self.path) or not os.path.isdir(self.path) or not os.path.exists(
-                        os.path.join(self.path, '.git')):
-                    raise ValueError(f"Local Git repository not found or invalid: {self.path}")
-                self.status_updated.emit(f"Opening local Git repository: {self.path}")
-                repo = Repo(self.path)
-            else:  # remote_git
-                self.status_updated.emit(f"Cloning remote Git repository: {self.path}")
-                temp_repo_dir = tempfile.mkdtemp(prefix="git_scan_temp_")
-                repo = Repo.clone_from(self.path, temp_repo_dir)
-                self.status_updated.emit(f"Repository cloned to: {temp_repo_dir}")
-
-            if repo.bare:
-                raise ValueError("Cannot scan a bare Git repository.")
-
-            commits_to_scan = list(repo.iter_commits()) if self.scan_history else [repo.head.commit]
-            total_commits = len(commits_to_scan)
-            processed_commits = 0
-
-            for commit in commits_to_scan:
-                if not self._is_running: return []  # Allow stopping
-                self.status_updated.emit(
-                    f"Processing commit: {commit.hexsha[:7]} by {commit.author.name} ({processed_commits + 1}/{total_commits})")
-
-                # Get files from the current commit's tree
-                for item in commit.tree.traverse():
-                    if not self._is_running: return []  # Allow stopping
-                    if item.type == 'blob':  # It's a file
-                        file_path = item.path
-                        if not self._should_scan_file(file_path):
-                            continue
-
-                        content = self._get_blob_content(item)
-                        if content is None:  # Skipped (e.g., binary) or error
-                            continue
-
-                        file_findings = find_sensitive_data_with_presidio(content, self.presidio_analyzer)
-                        for f in file_findings:
-                            finding_record = self._create_finding_record(
-                                f, file_path, content,
-                                commit_hash=commit.hexsha,
-                                commit_author=commit.author.name,
-                                commit_date=commit.authored_datetime.isoformat()
-                            )
-                            self.finding_found.emit(finding_record)
-                            findings.append(finding_record)
-
-                processed_commits += 1
-                self.progress_updated.emit(int((processed_commits / total_commits) * 100))
-
-        except InvalidGitRepositoryError:
-            raise ValueError(f"The path '{self.path}' is not a valid Git repository.")
-        except GitCommandError as e:
-            raise ValueError(f"Git command error: {e}")
-        except Exception as e:
-            raise e  # Re-raise other exceptions for general error handling
-        finally:
-            if temp_repo_dir and os.path.exists(temp_repo_dir):
-                self.status_updated.emit(f"Cleaning up temporary directory: {temp_repo_dir}")
-                shutil.rmtree(temp_repo_dir)
-        return findings
-
-    def _get_blob_content(self, blob) -> Union[str, None]:
-        """Reads content from a GitPython blob object, handling potential binaries."""
-        try:
-            # Read a small chunk to check if it's likely text
-            first_bytes = blob.data_stream.read(100)
-            blob.data_stream.seek(0)  # Reset stream position
-
-            if not first_bytes.isascii() and b'\x00' in first_bytes:  # Simple heuristic for binary
-                self.status_updated.emit(f"    Skipping binary file: {blob.path}")
-                return None
-            return blob.data_stream.read().decode('utf-8', errors='ignore')
-        except Exception as e:
-            self.status_updated.emit(f"    Error reading blob {blob.path}: {e}")
-            return None
-
-    def _should_scan_file(self, filepath: str) -> bool:
-        """Determines if a file should be scanned based on settings."""
-        excluded_patterns = self.settings.get('excluded_patterns', [])
-        included_extensions = self.settings.get('included_extensions', [])
-
-        # Check exclusions first
-        for pattern in excluded_patterns:
-            if pattern and pattern in filepath:  # Simple substring match for now
-                return False
-
-        # Check inclusions
-        if included_extensions:
-            _, ext = os.path.splitext(filepath)
-            return ext.lower() in [e.lower() for e in included_extensions if e]
-
-        return True  # If no inclusions specified, scan all non-excluded
-
-    def _create_finding_record(self, presidio_finding: dict, file_path: str, content: str,
-                               commit_hash: str = "N/A", commit_author: str = "N/A", commit_date: str = "N/A") -> dict:
-        """Helper to create a standardized finding record."""
-        finding_record = {
-            "file_path": file_path,
-            "commit_hash": commit_hash,
-            "commit_author": commit_author,
-            "commit_date": commit_date,
-            "entity_type": presidio_finding['entity_type'],
-            "sensitive_text": presidio_finding['text'],
-            "confidence": presidio_finding['score'],
-            "location_start": presidio_finding['start'],
-            "location_end": presidio_finding['end'],
-            "context": content[max(0, presidio_finding['start'] - 50):presidio_finding['end'] + 50].replace('\n', ' ')
-            # Snippet for context
-        }
-
-        # Add external breach checks
-        if presidio_finding['entity_type'] == "EMAIL_ADDRESS":
-            xon_result = check_email_with_xon(presidio_finding['text'])
-            finding_record["breach_status_xon"] = xon_result.get("breached", False)
-            if xon_result.get("breached"):
-                finding_record["breach_details_xon"] = xon_result.get("details", {})
-            else:
-                finding_record["breach_check_error_xon"] = xon_result.get("error", "")
-        elif presidio_finding['entity_type'] == "PASSWORD":
-            hibp_count = check_password_with_hibp(presidio_finding['text'])
-            finding_record["pwned_passwords_count"] = hibp_count
-            if hibp_count == -1:
-                finding_record["pwned_passwords_error"] = "Error checking HIBP Pwned Passwords."
-
-        return finding_record
+            self.analysis_error.emit(f"An error occurred during analysis: {e}")
 
 
-# --- Main GUI Application ---
-class SensitiveDataFinderApp(QMainWindow):
+# --- Main GUI Application Class ---
+class PIIAnalyzerApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Sensitive Data Finder")
-        self.setGeometry(100, 100, 900, 700)  # Increased size
-        self.presidio_analyzer = initialize_presidio_analyzer()
-        self.current_scan_worker = None
-        self.all_findings = []
-        self.settings_file = "app_settings.json"
-        self.settings = self._load_settings()
+        self.setWindowTitle("PII Analyzer")
+        self.setGeometry(100, 100, 1000, 700)  # Initial window size
+        self.setMinimumSize(800, 600)  # Set a minimum size
 
-        self._init_ui()
-        self._apply_settings_to_analyzer()
+        self.current_theme = "dark"  # Track current theme
+        self.init_ui()
+        self.apply_theme(self.current_theme)  # Apply initial theme
 
-    def _init_ui(self):
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.main_layout = QVBoxLayout(self.central_widget)
+    def init_ui(self):
+        print("Initializing UI...")  # Debug print at the start of UI initialization
+        # Main layout for the entire application
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(20, 20, 20, 20)  # Add padding around the main window
+        main_layout.setSpacing(15)  # Spacing between major elements
 
+        # Top bar with theme toggle and Groq recheck checkbox
+        top_bar_layout = QHBoxLayout()
+        top_bar_layout.addStretch(1)  # Pushes elements to the right
+
+        # Groq Recheck Checkbox
+        self.groq_recheck_checkbox = QCheckBox("Enable Groq Recheck")
+        self.groq_recheck_checkbox.setChecked(False)  # Default to disabled
+        top_bar_layout.addWidget(self.groq_recheck_checkbox)
+
+        # Theme toggle button
+        self.theme_toggle_button = QPushButton("Toggle Light/Dark Mode")
+        self.theme_toggle_button.clicked.connect(self.toggle_theme)
+        top_bar_layout.addWidget(self.theme_toggle_button)
+        main_layout.addLayout(top_bar_layout)
+
+        # Tab Widget for different functionalities
         self.tab_widget = QTabWidget()
-        self.main_layout.addWidget(self.tab_widget)
+        self.tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main_layout.addWidget(self.tab_widget)
 
-        self._create_scan_tab()
-        self._create_settings_tab()
-        self._create_about_tab()
+        # --- Text Analysis Tab ---
+        text_analysis_tab = QWidget()
+        text_analysis_layout = QVBoxLayout()
+        text_analysis_layout.setContentsMargins(15, 15, 15, 15)
+        text_analysis_layout.setSpacing(10)
+        text_analysis_tab.setLayout(text_analysis_layout)
+        self.tab_widget.addTab(text_analysis_tab, "Text Analysis")
 
-        self.status_bar = self.statusBar()
-        self.status_bar.showMessage("Ready to scan.")
+        # Input for Directory Path
+        dir_input_layout = QHBoxLayout()
+        dir_input_layout.setSpacing(10)
+        self.dir_label = QLabel("Input Directory:")
+        self.dir_label.setFixedWidth(120)  # Align labels
+        self.dir_entry = QLineEdit()
+        self.dir_entry.setPlaceholderText("Enter path or browse for a directory")
+        self.browse_button = QPushButton("Browse...")
+        self.browse_button.setFixedWidth(100)  # Consistent button width
+        print("Attempting to connect browse_button...")  # Debug print
+        self.browse_button.clicked.connect(self.browse_directory)
 
-    def _create_scan_tab(self):
-        self.scan_tab = QWidget()
-        self.tab_widget.addTab(self.scan_tab, "Scan")
-        self.scan_layout = QVBoxLayout(self.scan_tab)
+        dir_input_layout.addWidget(self.dir_label)
+        dir_input_layout.addWidget(self.dir_entry)
+        dir_input_layout.addWidget(self.browse_button)
+        text_analysis_layout.addLayout(dir_input_layout)
 
-        # Input Path/URL
-        path_layout = QHBoxLayout()
-        self.path_input = QLineEdit()
-        self.path_input.setPlaceholderText("Enter file/directory path or Git URL")
-        path_layout.addWidget(self.path_input)
+        # Analysis and Anonymized Data Display
+        results_layout = QHBoxLayout()
+        results_layout.setSpacing(15)
 
-        self.browse_file_btn = QPushButton("Browse File")
-        self.browse_file_btn.clicked.connect(self._browse_file)
-        path_layout.addWidget(self.browse_file_btn)
+        # Analysis Results
+        analysis_vbox = QVBoxLayout()
+        analysis_label = QLabel("Analysis Results:")
+        self.analysis_text = QTextEdit()
+        self.analysis_text.setReadOnly(True)
+        self.analysis_text.setPlaceholderText("Analysis results will appear here...")
+        analysis_vbox.addWidget(analysis_label)
+        analysis_vbox.addWidget(self.analysis_text)
+        results_layout.addLayout(analysis_vbox)
 
-        self.browse_dir_btn = QPushButton("Browse Dir")
-        self.browse_dir_btn.clicked.connect(self._browse_directory)
-        path_layout.addWidget(self.browse_dir_btn)
-        self.scan_layout.addLayout(path_layout)
+        # Anonymized Data
+        anonymized_vbox = QVBoxLayout()
+        anonymized_label = QLabel("Anonymized Data:")
+        self.anonymized_text = QTextEdit()
+        self.anonymized_text.setReadOnly(True)
+        self.anonymized_text.setPlaceholderText("Anonymized data will appear here...")
+        anonymized_vbox.addWidget(anonymized_label)
+        anonymized_vbox.addWidget(self.anonymized_text)
+        results_layout.addLayout(anonymized_vbox)
 
-        # Scan Type Selection
-        scan_type_group = QGroupBox("Scan Type")
-        scan_type_layout = QHBoxLayout()
-        self.radio_local_file = QRadioButton("Local File")
-        self.radio_local_dir = QRadioButton("Local Directory")
-        self.radio_local_git = QRadioButton("Local Git Repo")
-        self.radio_remote_git = QRadioButton("Remote Git Repo")
+        text_analysis_layout.addLayout(results_layout)
 
-        self.radio_local_file.setChecked(True)  # Default selection
+        # Buttons for Text Analysis
+        text_buttons_layout = QHBoxLayout()
+        text_buttons_layout.setSpacing(10)
+        self.run_analysis_button = QPushButton("Run Text Analysis")
+        self.clear_button = QPushButton("Clear Results")
+        print("Attempting to connect run_analysis_button...")  # Debug print for run_analysis_button
+        self.run_analysis_button.clicked.connect(self.start_analysis)
 
-        scan_type_layout.addWidget(self.radio_local_file)
-        scan_type_layout.addWidget(self.radio_local_dir)
-        scan_type_layout.addWidget(self.radio_local_git)
-        scan_type_layout.addWidget(self.radio_remote_git)
-        scan_type_group.setLayout(scan_type_layout)
-        self.scan_layout.addWidget(scan_type_group)
+        text_buttons_layout.addStretch(1)  # Pushes buttons to the right
+        text_buttons_layout.addWidget(self.run_analysis_button)
+        text_buttons_layout.addWidget(self.clear_button)
+        text_buttons_layout.addStretch(1)
+        text_analysis_layout.addLayout(text_buttons_layout)
 
-        # Git History Option
-        self.checkbox_scan_history = QCheckBox("Scan Git History (slower)")
-        self.checkbox_scan_history.setChecked(True)  # Default to scan history
-        self.scan_layout.addWidget(self.checkbox_scan_history)
+        # --- Image Analysis Tab (Placeholder) ---
+        image_analysis_tab = QWidget()
+        image_analysis_layout = QVBoxLayout()
+        image_analysis_layout.setContentsMargins(15, 15, 15, 15)
+        image_analysis_layout.setSpacing(10)
+        image_analysis_tab.setLayout(image_analysis_layout)
+        self.tab_widget.addTab(image_analysis_tab, "Image Analysis")
 
-        # Connect radio buttons to update Git history checkbox visibility
-        self.radio_local_file.toggled.connect(self._update_git_options_visibility)
-        self.radio_local_dir.toggled.connect(self._update_git_options_visibility)
-        self.radio_local_git.toggled.connect(self._update_git_options_visibility)
-        self.radio_remote_git.toggled.connect(self._update_git_options_visibility)
-        self._update_git_options_visibility()  # Initial update
+        image_label = QLabel("Image Analysis functionality will be added here.")
+        image_analysis_layout.addWidget(image_label)
 
-        # Control Buttons
-        control_layout = QHBoxLayout()
-        self.start_scan_btn = QPushButton("Start Scan")
-        self.start_scan_btn.clicked.connect(self._start_scan)
-        control_layout.addWidget(self.start_scan_btn)
+        image_file_input_layout = QHBoxLayout()
+        image_file_input_layout.setSpacing(10)
+        self.image_file_label = QLabel("Image File:")
+        self.image_file_label.setFixedWidth(120)
+        self.image_file_entry = QLineEdit()
+        self.image_file_entry.setPlaceholderText("Select an image file")
+        self.browse_image_button = QPushButton("Browse Image...")
+        self.browse_image_button.setFixedWidth(120)
+        print("Attempting to connect browse_image_button...")  # Debug print
+        self.browse_image_button.clicked.connect(self.browse_image_file)
+        image_file_input_layout.addWidget(self.image_file_label)
+        image_file_input_layout.addWidget(self.image_file_entry)
+        image_file_input_layout.addWidget(self.browse_image_button)
+        image_analysis_layout.addLayout(image_file_input_layout)
 
-        self.stop_scan_btn = QPushButton("Stop Scan")
-        self.stop_scan_btn.clicked.connect(self._stop_scan)
-        self.stop_scan_btn.setEnabled(False)  # Disabled until scan starts
-        control_layout.addWidget(self.stop_scan_btn)
-        self.scan_layout.addLayout(control_layout)
+        self.run_image_analysis_button = QPushButton("Run Image Analysis (Coming Soon)")
+        self.run_image_analysis_button.clicked.connect(self.show_coming_soon_message)
+        image_analysis_layout.addWidget(self.run_image_analysis_button, alignment=Qt.AlignCenter)
+        image_analysis_layout.addStretch(1)  # Push content to top
 
-        # Progress Bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setValue(0)
-        self.scan_layout.addWidget(self.progress_bar)
+        # --- PDF Analysis Tab (Placeholder) ---
+        pdf_analysis_tab = QWidget()
+        pdf_analysis_layout = QVBoxLayout()
+        pdf_analysis_layout.setContentsMargins(15, 15, 15, 15)
+        pdf_analysis_layout.setSpacing(10)
+        pdf_analysis_tab.setLayout(pdf_analysis_layout)
+        self.tab_widget.addTab(pdf_analysis_tab, "PDF Analysis")
 
-        # Results Display
-        self.results_display = QTextEdit()
-        self.results_display.setReadOnly(True)
-        self.results_display.setFont(QFont("Monospace", 10))
-        self.scan_layout.addWidget(self.results_display)
+        pdf_label = QLabel("PDF Analysis functionality will be added here.")
+        pdf_analysis_layout.addWidget(pdf_label)
 
-    def _create_settings_tab(self):
-        self.settings_tab = QWidget()
-        self.tab_widget.addTab(self.settings_tab, "Settings")
-        self.settings_layout = QVBoxLayout(self.settings_tab)
+        pdf_file_input_layout = QHBoxLayout()
+        pdf_file_input_layout.setSpacing(10)
+        self.pdf_file_label = QLabel("PDF File:")
+        self.pdf_file_label.setFixedWidth(120)
+        self.pdf_file_entry = QLineEdit()
+        self.pdf_file_entry.setPlaceholderText("Select a PDF file")
+        self.browse_pdf_button = QPushButton("Browse PDF...")
+        self.browse_pdf_button.setFixedWidth(120)
+        print("Attempting to connect browse_pdf_button...")  # Debug print
+        self.browse_pdf_button.clicked.connect(self.browse_pdf_file)
+        pdf_file_input_layout.addWidget(self.pdf_file_label)
+        pdf_file_input_layout.addWidget(self.pdf_file_entry)
+        pdf_file_input_layout.addWidget(self.browse_pdf_button)
+        pdf_analysis_layout.addLayout(pdf_file_input_layout)
 
-        # Presidio Confidence Threshold
-        confidence_layout = QHBoxLayout()
-        confidence_layout.addWidget(QLabel("Presidio Confidence Threshold:"))
-        self.confidence_slider = QSlider(Qt.Horizontal)
-        self.confidence_slider.setMinimum(0)
-        self.confidence_slider.setMaximum(100)
-        self.confidence_slider.setValue(int(self.settings.get('presidio_confidence', 0.75) * 100))
-        self.confidence_slider.setTickInterval(10)
-        self.confidence_slider.setTickPosition(QSlider.TicksBelow)
-        self.confidence_slider.valueChanged.connect(self._update_confidence_label)
-        confidence_layout.addWidget(self.confidence_slider)
-        self.confidence_label = QLabel(f"{self.settings.get('presidio_confidence', 0.75):.2f}")
-        confidence_layout.addWidget(self.confidence_label)
-        self.settings_layout.addLayout(confidence_layout)
+        self.run_pdf_analysis_button = QPushButton("Run PDF Analysis (Coming Soon)")
+        self.run_pdf_analysis_button.clicked.connect(self.show_coming_soon_message)
+        pdf_analysis_layout.addWidget(self.run_pdf_analysis_button, alignment=Qt.AlignCenter)
+        pdf_analysis_layout.addStretch(1)  # Push content to top
 
-        # Excluded Patterns
-        self.settings_layout.addWidget(
-            QLabel("Excluded File/Directory Patterns (one per line, e.g., .git/, node_modules/, *.log):"))
-        self.excluded_patterns_input = QTextEdit()
-        self.excluded_patterns_input.setPlaceholderText("Enter patterns to exclude...")
-        self.excluded_patterns_input.setText("\n".join(self.settings.get('excluded_patterns', [])))
-        self.settings_layout.addWidget(self.excluded_patterns_input)
+        # --- GitHub Repository Analysis Tab (NEW) ---
+        github_analysis_tab = QWidget()
+        github_analysis_layout = QVBoxLayout()
+        github_analysis_layout.setContentsMargins(15, 15, 15, 15)
+        github_analysis_layout.setSpacing(10)
+        github_analysis_tab.setLayout(github_analysis_layout)
+        self.tab_widget.addTab(github_analysis_tab, "GitHub Analysis")
 
-        # Included Extensions
-        self.settings_layout.addWidget(QLabel("Included File Extensions (one per line, e.g., .py, .js, .txt):"))
-        self.included_extensions_input = QTextEdit()
-        self.included_extensions_input.setPlaceholderText("Enter extensions to include...")
-        self.included_extensions_input.setText("\n".join(self.settings.get('included_extensions', [])))
-        self.settings_layout.addWidget(self.included_extensions_input)
+        github_label = QLabel("GitHub Repository Analysis functionality will be added here.")
+        github_analysis_layout.addWidget(github_label)
 
-        # HIBP API Key (Optional)
-        self.settings_layout.addWidget(QLabel("HIBP API Key (for email breach details, Pwned Passwords API is free):"))
-        self.hibp_api_key_input = QLineEdit()
-        self.hibp_api_key_input.setPlaceholderText("Enter your HIBP API key (optional)")
-        self.hibp_api_key_input.setText(self.settings.get('hibp_api_key', ''))
-        self.settings_layout.addWidget(self.hibp_api_key_input)
-        self.settings_layout.addWidget(
-            QLabel("Note: XposedOrNot email checks are generally free and do not require a key."))
+        github_repo_input_layout = QHBoxLayout()
+        github_repo_input_layout.setSpacing(10)
+        self.github_repo_label = QLabel("Repository URL:")
+        self.github_repo_label.setFixedWidth(120)
+        self.github_repo_entry = QLineEdit()
+        self.github_repo_entry.setPlaceholderText("e.g., https://github.com/user/repo")
+        github_repo_input_layout.addWidget(self.github_repo_label)
+        github_repo_input_layout.addWidget(self.github_repo_entry)
+        github_analysis_layout.addLayout(github_repo_input_layout)
 
-        # Save Settings Button
-        save_settings_btn = QPushButton("Save Settings")
-        save_settings_btn.clicked.connect(self._save_settings)
-        self.settings_layout.addWidget(save_settings_btn)
-        self.settings_layout.addStretch(1)  # Push content to top
+        self.run_github_analysis_button = QPushButton("Scan Repository (Coming Soon)")
+        self.run_github_analysis_button.clicked.connect(self.show_coming_soon_message)
+        github_analysis_layout.addWidget(self.run_github_analysis_button, alignment=Qt.AlignCenter)
+        github_analysis_layout.addStretch(1)
 
-    def _create_about_tab(self):
-        self.about_tab = QWidget()
-        self.tab_widget.addTab(self.about_tab, "About")
-        self.about_layout = QVBoxLayout(self.about_tab)
+        # --- Email Data Leak Search Tab (NEW) ---
+        email_leak_tab = QWidget()
+        email_leak_layout = QVBoxLayout()
+        email_leak_layout.setContentsMargins(15, 15, 15, 15)
+        email_leak_layout.setSpacing(10)
+        email_leak_tab.setLayout(email_leak_layout)
+        self.tab_widget.addTab(email_leak_tab, "Email Leak Search")
 
-        about_text = QTextEdit()
-        about_text.setReadOnly(True)
-        about_text.setHtml("""
-            <h2>Sensitive Data Finder</h2>
-            <p>This application helps you scan files, directories, and Git repositories for sensitive information.</p>
-            <h3>Features:</h3>
-            <ul>
-                <li><strong>Local File/Directory Scan:</strong> Scan content on your local machine.</li>
-                <li><strong>Git Repository Scan:</strong> Scan local or remote Git repositories, including full commit history for exposed secrets.</li>
-                <li><strong>External Breach Checks:</strong> Integrates with XposedOrNot (for email breaches) and Have I Been Pwned (for pwned passwords) to provide external context to findings.</li>
-                <li><strong>Configurable:</strong> Adjust Presidio confidence, exclude/include file patterns, and manage API keys.</li>
-            </ul>
-            <h3>How it works:</h3>
-            <p>It leverages the <a href="https://microsoft.github.io/Presidio/" style="color: blue;">Presidio</a> library for sensitive data detection, <a href="https://gitpython.readthedocs.io/en/stable/" style="color: blue;">GitPython</a> for Git interactions, and external APIs for breach intelligence.</p>
-            <p><strong>Disclaimer:</strong> This tool is for educational and security assessment purposes. Always ensure you have proper authorization before scanning any data or repositories you do not own or manage. Be mindful of API rate limits.</p>
-            <p>Version: 1.0</p>
-        """)
-        self.about_layout.addWidget(about_text)
+        email_leak_label = QLabel("Email Data Leak Search functionality will be added here.")
+        email_leak_layout.addWidget(email_leak_label)
 
-    def _update_git_options_visibility(self):
-        """Hides/shows Git-specific options based on selected scan type."""
-        is_git_scan = self.radio_local_git.isChecked() or self.radio_remote_git.isChecked()
-        self.checkbox_scan_history.setVisible(is_git_scan)
+        email_input_layout = QHBoxLayout()
+        email_input_layout.setSpacing(10)
+        self.email_label = QLabel("Email Address:")
+        self.email_label.setFixedWidth(120)
+        self.email_entry = QLineEdit()
+        self.email_entry.setPlaceholderText("e.g., example@domain.com")
+        email_input_layout.addWidget(self.email_label)
+        email_input_layout.addWidget(self.email_entry)
+        email_leak_layout.addLayout(email_input_layout)
 
-    def _browse_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select File to Scan")
-        if file_path:
-            self.path_input.setText(file_path)
-            self.radio_local_file.setChecked(True)
+        self.run_email_leak_button = QPushButton("Search Data Leaks (Coming Soon)")
+        self.run_email_leak_button.clicked.connect(self.show_coming_soon_message)
+        email_leak_layout.addWidget(self.run_email_leak_button, alignment=Qt.AlignCenter)
+        email_leak_layout.addStretch(1)
 
-    def _browse_directory(self):
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory to Scan")
-        if dir_path:
-            self.path_input.setText(dir_path)
-            self.radio_local_dir.setChecked(True)
+        self.setLayout(main_layout)
 
-    def _update_confidence_label(self, value):
-        self.confidence_label.setText(f"{value / 100.0:.2f}")
-
-    def _load_settings(self):
-        """Loads settings from a JSON file."""
-        if os.path.exists(self.settings_file):
-            with open(self.settings_file, 'r') as f:
-                return json.load(f)
-        return {  # Default settings
-            'presidio_confidence': 0.75,
-            'excluded_patterns': ['.git/', '.DS_Store', '__pycache__/', '*.log', '*.lock', '*.min.js', '*.css.map',
-                                  'node_modules/', '.venv/', '.vscode/', '.idea/', 'tmp/', 'temp/'],
-            'included_extensions': ['.py', '.js', '.ts', '.java', '.cs', '.php', '.html', '.css', '.json', '.yaml',
-                                    '.yml', '.xml', '.txt', '.md', '.env', '.conf', '.config', '.sql'],
-            'hibp_api_key': ''
-        }
-
-    def _save_settings(self):
-        """Saves settings to a JSON file."""
-        self.settings['presidio_confidence'] = self.confidence_slider.value() / 100.0
-        self.settings['excluded_patterns'] = [line.strip() for line in
-                                              self.excluded_patterns_input.toPlainText().split('\n') if line.strip()]
-        self.settings['included_extensions'] = [line.strip() for line in
-                                                self.included_extensions_input.toPlainText().split('\n') if
-                                                line.strip()]
-        self.settings['hibp_api_key'] = self.hibp_api_key_input.text().strip()
-
-        with open(self.settings_file, 'w') as f:
-            json.dump(self.settings, f, indent=4)
-        self.status_bar.showMessage("Settings saved successfully!")
-        self._apply_settings_to_analyzer()  # Apply immediately
-
-    def _apply_settings_to_analyzer(self):
-        """Applies current settings to the Presidio analyzer."""
-        confidence = self.settings.get('presidio_confidence', 0.75)
-        self.presidio_analyzer.set_min_score_for_entity_type(confidence)
-        # For a real Presidio Analyzer, you'd configure it here.
-        # Example: analyzer.set_analysis_parameters(min_score=confidence)
-        # You might also need to re-initialize recognizers if custom ones are added based on settings.
-        self.status_bar.showMessage(f"Analyzer confidence set to {confidence:.2f}")
-
-    def _start_scan(self):
-        if self.current_scan_worker and self.current_scan_worker.isRunning():
-            QMessageBox.warning(self, "Scan in Progress", "A scan is already running. Please stop it first.")
-            return
-
-        path = self.path_input.text().strip()
-        if not path:
-            QMessageBox.warning(self, "Input Error", "Please enter a path or URL to scan.")
-            return
-
-        scan_type = ""
-        if self.radio_local_file.isChecked():
-            scan_type = "local_file"
-        elif self.radio_local_dir.isChecked():
-            scan_type = "local_directory"
-        elif self.radio_local_git.isChecked():
-            scan_type = "local_git"
-        elif self.radio_remote_git.isChecked():
-            scan_type = "remote_git"
-
-        scan_history = self.checkbox_scan_history.isChecked() if (
-                    scan_type == "local_git" or scan_type == "remote_git") else False
-
-        self.results_display.clear()
-        self.all_findings = []
-        self.progress_bar.setValue(0)
-        self.start_scan_btn.setEnabled(False)
-        self.stop_scan_btn.setEnabled(True)
-        self.status_bar.showMessage(f"Starting {scan_type} scan...")
-
-        # Update HIBP API key in environment for the worker thread
-        # This is important if the worker thread directly accesses os.environ
-        # For a more robust solution, pass the key directly to the worker.
-        os.environ['HIBP_API_KEY'] = self.settings.get('hibp_api_key', '')
-
-        self.current_scan_worker = ScannerWorker(
-            scan_type=scan_type,
-            path=path,
-            scan_history=scan_history,
-            presidio_analyzer=self.presidio_analyzer,
-            settings=self.settings  # Pass settings to worker
-        )
-        self.current_scan_worker.progress_updated.connect(self.progress_bar.setValue)
-        self.current_scan_worker.status_updated.connect(self.status_bar.showMessage)
-        self.current_scan_worker.finding_found.connect(self._display_finding)
-        self.current_scan_worker.scan_finished.connect(self._scan_finished)
-        self.current_scan_worker.scan_error.connect(self._scan_error)
-        self.current_scan_worker.start()
-
-    def _stop_scan(self):
-        if self.current_scan_worker and self.current_scan_worker.isRunning():
-            self.current_scan_worker.stop()
-            self.current_scan_worker.wait()  # Wait for the thread to finish cleanly
-            self.status_bar.showMessage("Scan stopped by user.")
-            self.start_scan_btn.setEnabled(True)
-            self.stop_scan_btn.setEnabled(False)
-
-    def _display_finding(self, finding: dict):
-        self.all_findings.append(finding)
-        output_text = f"--- Finding ---\n"
-        output_text += f"File: {finding.get('file_path', 'N/A')}\n"
-        if finding.get('commit_hash') != "N/A":
-            output_text += f"Commit: {finding.get('commit_hash', 'N/A')[:7]} by {finding.get('commit_author', 'N/A')} on {finding.get('commit_date', 'N/A')}\n"
-        output_text += f"Type: {finding.get('entity_type', 'N/A')}\n"
-        output_text += f"Text: '{finding.get('sensitive_text', 'N/A')}'\n"
-        output_text += f"Confidence: {finding.get('confidence', 'N/A'):.2f}\n"
-        output_text += f"Context: '{finding.get('context', 'N/A')}'\n"
-
-        if finding.get('entity_type') == "EMAIL_ADDRESS":
-            output_text += f"  Breached (XposedOrNot): {'YES' if finding.get('breach_status_xon') else 'NO'}\n"
-            if finding.get('breach_status_xon'):
-                details = finding.get('breach_details_xon', {})
-                output_text += f"    XON Details: Breaches: {details.get('breaches_count', 'N/A')}, Pastes: {details.get('pastes_count', 'N/A')}\n"
-            elif finding.get('breach_check_error_xon'):
-                output_text += f"    XON Check Error: {finding.get('breach_check_error_xon')}\n"
-        elif finding.get('entity_type') == "PASSWORD":
-            pwned_count = finding.get('pwned_passwords_count', -1)
-            if pwned_count > 0:
-                output_text += f"  Pwned (HIBP): Found {pwned_count} times! (Strongly advise changing)\n"
-            elif pwned_count == 0:
-                output_text += f"  Pwned (HIBP): Not found in known breaches (good).\n"
-            else:
-                output_text += f"  Pwned (HIBP) Check Error: {finding.get('pwned_passwords_error', 'N/A')}\n"
-
-        output_text += "---\n\n"
-        self.results_display.append(output_text)
-
-    def _scan_finished(self, message: str):
-        self.status_bar.showMessage(message)
-        self.start_scan_btn.setEnabled(True)
-        self.stop_scan_btn.setEnabled(False)
-        QMessageBox.information(self, "Scan Complete", message)
-
-    def _scan_error(self, error_message: str):
-        self.status_bar.showMessage(f"Scan Error: {error_message}")
-        self.start_scan_btn.setEnabled(True)
-        self.stop_scan_btn.setEnabled(False)
-        QMessageBox.critical(self, "Scan Error", error_message)
-
-    def closeEvent(self, event):
-        """Handles application close event to stop running threads."""
-        if self.current_scan_worker and self.current_scan_worker.isRunning():
-            reply = QMessageBox.question(self, 'Confirm Exit',
-                                         "A scan is in progress. Do you want to stop it and exit?",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.Yes:
-                self.current_scan_worker.stop()
-                self.current_scan_worker.wait()  # Wait for thread to terminate
-                event.accept()
-            else:
-                event.ignore()
+    def browse_directory(self):
+        print("Inside browse_directory function!")  # Debug print
+        directory = QFileDialog.getExistingDirectory(self, "Select Directory")
+        if directory:
+            self.dir_entry.setText(directory)
+            QMessageBox.information(self, "Directory Selected", f"Selected: {directory}")
         else:
-            event.accept()
+            QMessageBox.information(self, "No Selection", "No directory was selected.")
+
+    def browse_image_file(self):
+        print("Inside browse_image_file function!")  # Debug print
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Image File", "",
+                                                   "Image Files (*.png *.jpg *.jpeg *.gif)")
+        if file_path:
+            self.image_file_entry.setText(file_path)
+            QMessageBox.information(self, "Image File Selected", f"Selected: {file_path}")
+        else:
+            QMessageBox.information(self, "No Selection", "No image file was selected.")
+
+    def browse_pdf_file(self):
+        print("Inside browse_pdf_file function!")  # Debug print
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select PDF File", "", "PDF Files (*.pdf)")
+        if file_path:
+            self.pdf_file_entry.setText(file_path)
+            QMessageBox.information(self, "PDF File Selected", f"Selected: {file_path}")
+        else:
+            QMessageBox.information(self, "No Selection", "No PDF file was selected.")
+
+    def start_analysis(self):
+        print("Inside start_analysis function!")  # Debug print for start_analysis
+        indir = self.dir_entry.text()
+        if not indir:
+            QMessageBox.warning(self, "Input Error", "Please enter a directory path.")
+            return
+
+        self.analysis_text.setText("Analyzing...")
+        self.anonymized_text.setText("Anonymizing...")
+        self.set_buttons_enabled(False)  # Disable buttons during analysis
+
+        # Get Groq recheck state from the checkbox
+        enable_groq_recheck = self.groq_recheck_checkbox.isChecked()
+
+        # Create and start the worker thread, passing the Groq recheck state
+        self.worker = PIIAnalysisWorker(indir, enable_groq_recheck)
+        self.worker.analysis_finished.connect(self.display_results)
+        self.worker.analysis_error.connect(self.handle_analysis_error)
+        self.worker.start()
+
+    def display_results(self, analysis_results, anonymized_data):
+        # Display analysis results
+        if analysis_results:
+            self.analysis_text.setText("\n".join(analysis_results))
+        else:
+            self.analysis_text.setText("No sensitive data detected.")
+
+        # Display anonymized data
+        if anonymized_data:
+            self.anonymized_text.setText("\n".join(anonymized_data))
+        else:
+            self.anonymized_text.setText("No data to anonymize or no sensitive data found.")
+
+        self.set_buttons_enabled(True)  # Re-enable buttons
+
+    def handle_analysis_error(self, error_message):
+        QMessageBox.critical(self, "Analysis Error", error_message)
+        self.analysis_text.setText(f"Error: {error_message}")
+        self.anonymized_text.setText("Error during anonymization.")
+        self.set_buttons_enabled(True)  # Re-enable buttons
+
+    def clear_results(self):
+        self.dir_entry.clear()
+        self.analysis_text.clear()
+        self.anonymized_text.clear()
+        self.image_file_entry.clear()
+        self.pdf_file_entry.clear()
+        self.github_repo_entry.clear()  # Clear new entries
+        self.email_entry.clear()  # Clear new entries
+        self.groq_recheck_checkbox.setChecked(False)  # Reset Groq recheck checkbox
+        QMessageBox.information(self, "Cleared", "All results and inputs cleared.")
+
+    def show_coming_soon_message(self):
+        QMessageBox.information(self, "Feature Coming Soon",
+                                "This feature is under development and will be available in a future update!")
+
+    def set_buttons_enabled(self, enabled):
+        self.run_analysis_button.setEnabled(enabled)
+        self.browse_button.setEnabled(enabled)
+        self.clear_button.setEnabled(enabled)
+        self.groq_recheck_checkbox.setEnabled(enabled)  # Enable/disable checkbox
+        # Disable placeholder buttons as well if analysis is running
+        self.run_image_analysis_button.setEnabled(enabled)
+        self.browse_image_button.setEnabled(enabled)
+        self.run_pdf_analysis_button.setEnabled(enabled)
+        self.browse_pdf_button.setEnabled(enabled)
+        self.run_github_analysis_button.setEnabled(enabled)  # New button
+        self.run_email_leak_button.setEnabled(enabled)  # New button
+
+    def toggle_theme(self):
+        if self.current_theme == "dark":
+            self.apply_theme("light")
+            self.current_theme = "light"
+        else:
+            self.apply_theme("dark")
+            self.current_theme = "dark"
+
+    def apply_theme(self, theme_name):
+        if theme_name == "dark":
+            qss = """
+                QWidget {
+                    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+                    font-size: 14px;
+                    color: #E0E0E0; /* Light gray text for dark mode */
+                    background-color: #2B2B2B; /* Dark gray background */
+                }
+
+                /* Main Window */
+                PIIAnalyzerApp {
+                    background-color: #1E1E1E; /* Even darker background for the main window */
+                    border-radius: 10px;
+                }
+
+                /* QTabWidget Styling */
+                QTabWidget::pane {
+                    border: 1px solid #444444;
+                    background-color: #252526; /* Darker background for tab content */
+                    border-radius: 8px;
+                    padding: 10px;
+                }
+
+                QTabBar::tab {
+                    background: #3C3C3C;
+                    border: 1px solid #444444;
+                    border-bottom-left-radius: 5px;
+                    border-bottom-right-radius: 5px;
+                    padding: 10px 20px;
+                    margin-right: 2px;
+                    color: #BBBBBB; /* Lighter gray for tab text */
+                    font-weight: bold;
+                }
+
+                QTabBar::tab:selected {
+                    background: #252526; /* Matches pane background */
+                    border-color: #444444;
+                    border-bottom-color: #252526; /* Make the selected tab's bottom border blend with the pane */
+                    color: #FFFFFF; /* White text for selected tab */
+                }
+
+                QTabBar::tab:hover {
+                    background: #4A4A4A; /* Slightly lighter dark gray on hover */
+                }
+
+                /* QLineEdit Styling */
+                QLineEdit {
+                    border: 1px solid #555555;
+                    border-radius: 5px;
+                    padding: 8px;
+                    background-color: #333333; /* Dark background for input fields */
+                    color: #E0E0E0; /* Light text color */
+                    selection-background-color: #007ACC; /* VS Code blue for selection */
+                }
+
+                /* QTextEdit Styling */
+                QTextEdit {
+                    border: 1px solid #555555;
+                    border-radius: 5px;
+                    padding: 10px;
+                    background-color: #333333; /* Dark background for text areas */
+                    color: #E0E0E0; /* Light text color */
+                    selection-background-color: #007ACC;
+                }
+
+                /* QPushButton Styling */
+                QPushButton {
+                    background-color: #007ACC; /* A prominent blue for buttons */
+                    color: white;
+                    border: none;
+                    border-radius: 5px;
+                    padding: 10px 15px;
+                    font-weight: bold;
+                    min-width: 100px;
+                }
+
+                QPushButton:hover {
+                    background-color: #005F99; /* Darker blue on hover */
+                }
+
+                QPushButton:pressed {
+                    background-color: #004C7A; /* Even darker blue when pressed */
+                }
+
+                QPushButton:disabled {
+                    background-color: #555555;
+                    color: #AAAAAA;
+                }
+
+                /* QLabel Styling */
+                QLabel {
+                    color: #E0E0E0; /* Light gray for labels */
+                    font-weight: 500;
+                }
+
+                /* QCheckBox Styling */
+                QCheckBox {
+                    color: #E0E0E0;
+                }
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    border: 1px solid #555555;
+                    border-radius: 3px;
+                    background-color: #333333;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #007ACC;
+                    border: 1px solid #007ACC;
+                    /* Base64 encoded SVG for a simple checkmark */
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBvbHlsaW5lIHBvaW50cz0iMjAgNiA5IDE3IDQgMTIiPjwvcG9seWxpbmU+PC9zdmc+);
+                }
+                QCheckBox::indicator:disabled {
+                    background-color: #444444;
+                    border: 1px solid #666666;
+                }
+
+                /* QMessageBox Styling */
+                QMessageBox {
+                    background-color: #2B2B2B; /* Consistent with main app background */
+                    font-size: 14px;
+                    color: #E0E0E0;
+                }
+                QMessageBox QPushButton {
+                    background-color: #007ACC;
+                    color: white;
+                    border-radius: 5px;
+                    padding: 8px 15px;
+                }
+                QMessageBox QPushButton:hover {
+                    background-color: #005F99;
+                }
+            """
+        else:  # Light mode
+            qss = """
+                QWidget {
+                    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+                    font-size: 14px;
+                    color: #333;
+                    background-color: #f0f2f5; /* Light gray background */
+                }
+
+                /* Main Window */
+                PIIAnalyzerApp {
+                    background-color: #e0e2e5; /* Slightly darker background for the main window */
+                    border-radius: 10px;
+                }
+
+                /* QTabWidget Styling */
+                QTabWidget::pane {
+                    border: 1px solid #c0c2c5;
+                    background-color: #ffffff; /* White background for tab content */
+                    border-radius: 8px;
+                    padding: 10px;
+                }
+
+                QTabBar::tab {
+                    background: #d0d2d5;
+                    border: 1px solid #c0c2c5;
+                    border-bottom-left-radius: 5px;
+                    border-bottom-right-radius: 5px;
+                    padding: 10px 20px;
+                    margin-right: 2px;
+                    color: #555;
+                    font-weight: bold;
+                }
+
+                QTabBar::tab:selected {
+                    background: #ffffff;
+                    border-color: #c0c2c5;
+                    border-bottom-color: #ffffff; /* Make the selected tab's bottom border blend with the pane */
+                    color: #2c3e50;
+                }
+
+                QTabBar::tab:hover {
+                    background: #e9ecef;
+                }
+
+                /* QLineEdit Styling */
+                QLineEdit {
+                    border: 1px solid #c0c2c5;
+                    border-radius: 5px;
+                    padding: 8px;
+                    background-color: #ffffff;
+                    selection-background-color: #a8d8ff;
+                }
+
+                /* QTextEdit Styling */
+                QTextEdit {
+                    border: 1px solid #c0c2c5;
+                    border-radius: 5px;
+                    padding: 10px;
+                    background-color: #ffffff;
+                    color: #333;
+                    selection-background-color: #a8d8ff;
+                }
+
+                /* QPushButton Styling */
+                QPushButton {
+                    background-color: #007bff; /* Primary blue */
+                    color: white;
+                    border: none;
+                    border-radius: 5px;
+                    padding: 10px 15px;
+                    font-weight: bold;
+                    min-width: 100px;
+                }
+
+                QPushButton:hover {
+                    background-color: #0056b3; /* Darker blue on hover */
+                }
+
+                QPushButton:pressed {
+                    background-color: #004085; /* Even darker blue when pressed */
+                }
+
+                QPushButton:disabled {
+                    background-color: #cccccc;
+                    color: #666666;
+                }
+
+                /* QLabel Styling */
+                QLabel {
+                    color: #333;
+                    font-weight: 500;
+                }
+
+                /* QCheckBox Styling */
+                QCheckBox {
+                    color: #333;
+                }
+                QCheckBox::indicator {
+                    width: 16px;
+                    height: 16px;
+                    border: 1px solid #c0c2c5;
+                    border-radius: 3px;
+                    background-color: #ffffff;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #007bff;
+                    border: 1px solid #007bff;
+                    /* Base64 encoded SVG for a simple checkmark */
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiHN0cm9rZS1liW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBvbHlsaW5lIHBvaW50cz0iMjAgNiA5IDE3IDQgMTIiPjwvcG9seWxpbmU+PC9zdmc+);
+                }
+                QCheckBox::indicator:disabled {
+                    background-color: #e0e0e0;
+                    border: 1px solid #b0b0b0;
+                }
+
+                /* QMessageBox Styling */
+                QMessageBox {
+                    background-color: #f0f2f5; /* Consistent with main app background */
+                    font-size: 14px;
+                    color: #333;
+                }
+                QMessageBox QPushButton {
+                    background-color: #007bff;
+                    color: white;
+                    border-radius: 5px;
+                    padding: 8px 15px;
+                }
+                QMessageBox QPushButton:hover {
+                    background-color: #0056b3;
+                }
+            """
+        self.setStyleSheet(qss)
 
 
+# --- Main execution block ---
 if __name__ == "__main__":
-    # Ensure 'requests' is installed for XposedOrNot/HIBP and 'GitPython' for Git
-    # pip install requests GitPython PyQt5
-
     app = QApplication(sys.argv)
-    window = SensitiveDataFinderApp()
+    window = PIIAnalyzerApp()
     window.show()
     sys.exit(app.exec_())
