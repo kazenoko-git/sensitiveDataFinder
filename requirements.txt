@@ -7,3 +7,5 @@ pillow~=11.2.1
 pdf2image~=1.17.0
 reportlab~=4.4.2
 Groq
+PyQt5
+
