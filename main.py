@@ -241,31 +241,31 @@ class PIIAnalyzerApp(QWidget):
         github_buttons_layout.addStretch(1)
         github_analysis_layout.addLayout(github_buttons_layout)
 
-        # --- Email Data Leak Search Tab (Placeholder) ---
-        email_leak_tab = QWidget()
-        email_leak_layout = QVBoxLayout()
-        email_leak_layout.setContentsMargins(15, 15, 15, 15)
-        email_leak_layout.setSpacing(10)
-        email_leak_tab.setLayout(email_leak_layout)
-        self.tab_widget.addTab(email_leak_tab, "Email Leak Search")
+        # Removed the Email Data Leak Search Tab
+        # email_leak_tab = QWidget()
+        # email_leak_layout = QVBoxLayout()
+        # email_leak_layout.setContentsMargins(15, 15, 15, 15)
+        # email_leak_layout.setSpacing(10)
+        # email_leak_tab.setLayout(email_leak_layout)
+        # self.tab_widget.addTab(email_leak_tab, "Email Leak Search")
 
-        email_leak_label = QLabel("Email Data Leak Search functionality will be added here.")
-        email_leak_layout.addWidget(email_leak_label)
+        # email_leak_label = QLabel("Email Data Leak Search functionality will be added here.")
+        # email_leak_layout.addWidget(email_leak_label)
 
-        email_input_layout = QHBoxLayout()
-        email_input_layout.setSpacing(10)
-        self.email_label = QLabel("Email Address:")
-        self.email_label.setFixedWidth(120)
-        self.email_entry = QLineEdit()
-        self.email_entry.setPlaceholderText("e.g., example@domain.com")
-        email_input_layout.addWidget(self.email_label)
-        email_input_layout.addWidget(self.email_entry)
-        email_leak_layout.addLayout(email_input_layout)
+        # email_input_layout = QHBoxLayout()
+        # email_input_layout.setSpacing(10)
+        # self.email_label = QLabel("Email Address:")
+        # self.email_label.setFixedWidth(120)
+        # self.email_entry = QLineEdit()
+        # self.email_entry.setPlaceholderText("e.g., example@domain.com")
+        # email_input_layout.addWidget(self.email_label)
+        # email_input_layout.addWidget(self.email_entry)
+        # email_leak_layout.addLayout(email_input_layout)
 
-        self.run_email_leak_button = QPushButton("Search Data Leaks (Coming Soon)")
-        self.run_email_leak_button.clicked.connect(self.show_coming_soon_message)
-        email_leak_layout.addWidget(self.run_email_leak_button, alignment=Qt.AlignCenter)
-        email_leak_layout.addStretch(1)
+        # self.run_email_leak_button = QPushButton("Search Data Leaks (Coming Soon)")
+        # self.run_email_leak_button.clicked.connect(self.show_coming_soon_message)
+        # email_leak_layout.addWidget(self.run_email_leak_button, alignment=Qt.AlignCenter)
+        # email_leak_layout.addStretch(1)
 
         self.setLayout(main_layout)
 
@@ -390,8 +390,8 @@ class PIIAnalyzerApp(QWidget):
 
         self.groq_recheck_checkbox.setEnabled(enabled)  # Enable/disable checkbox
 
-        # Placeholder buttons
-        self.run_email_leak_button.setEnabled(enabled)
+        # Placeholder buttons (if any remain)
+        # self.run_email_leak_button.setEnabled(enabled) # Removed
 
     def toggle_theme(self):
         if self.current_theme == "dark":
