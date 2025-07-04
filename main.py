@@ -4,23 +4,18 @@ from PyQt5.QtWidgets import (
     QLineEdit, QTextEdit, QLabel, QFileDialog, QMessageBox, QTabWidget, QSizePolicy, QCheckBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
+import os  # Import os for path validation
 
-# Import the chk class from your main_script_py file
-# Ensure main_script_py.py is in the same directory as this gui_app.py
 try:
     from collector import chk
 except ImportError:
-    QMessageBox.critical(None, "Import Error",
-                         "Could not import 'chk' class from 'main_script_py.py'. "
-                         "Please ensure 'main_script_py.py' is in the same directory.")
+    print("ERROR: Could not import 'chk' class from 'collector.py'.")
+    print("Please ensure 'collector.py' is in the same directory.")
     sys.exit(1)
 
 
-# --- Worker Thread for PII Analysis ---
-# Running the analysis in a separate thread prevents the GUI from freezing
-# during long-running operations.
+# --- Worker Thread for PII Analysis (now handles all file types via fileHandler) ---
 class PIIAnalysisWorker(QThread):
-    # Signals to communicate results back to the GUI thread
     analysis_finished = pyqtSignal(list, list)
     analysis_error = pyqtSignal(str)
 
@@ -31,29 +26,52 @@ class PIIAnalysisWorker(QThread):
 
     def run(self):
         try:
-            # Create an instance of the chk class and run the analysis
             analyzer = chk()
-            # Pass the enable_groq_recheck flag to the check method
+            # The chk.check method will now use the updated fileHandler.get_data
+            # which handles text, image, and PDF files.
             analysis_results, anonymized_data = analyzer.check(self.indir, self.enable_groq_recheck)
-
-            # --- Debugging and Type Checking ---
-            print(f"Worker: Type of analysis_results before emit: {type(analysis_results)}")
-            print(f"Worker: Type of anonymized_data before emit: {type(anonymized_data)}")
 
             # Ensure analysis_results is a list
             if not isinstance(analysis_results, list):
                 print(f"Worker Warning: analysis_results is not a list. Converting to list: {type(analysis_results)}")
-                analysis_results = [str(analysis_results)]  # Convert to a list containing its string representation
+                analysis_results = [str(analysis_results)]
 
             # Ensure anonymized_data is a list
             if not isinstance(anonymized_data, list):
                 print(f"Worker Warning: anonymized_data is not a list. Converting to list: {type(anonymized_data)}")
-                anonymized_data = [str(anonymized_data)]  # Convert to a list containing its string representation
-            # --- End Debugging and Type Checking ---
+                anonymized_data = [str(anonymized_data)]
 
             self.analysis_finished.emit(analysis_results, anonymized_data)
         except Exception as e:
-            self.analysis_error.emit(f"An error occurred during analysis: {e}")
+            self.analysis_error.emit(f"An error occurred during text analysis: {e}")
+
+
+# --- Worker Thread for GitHub Analysis ---
+class GitHubAnalysisWorker(QThread):
+    github_analysis_finished = pyqtSignal(list, list)
+    github_analysis_error = pyqtSignal(str)
+
+    def __init__(self, repo_url, enable_groq_recheck):
+        super().__init__()
+        self.repo_url = repo_url
+        self.enable_groq_recheck = enable_groq_recheck
+
+    def run(self):
+        try:
+            analyzer = chk()
+            # The chk.check method will now use the updated fileHandler.get_data
+            # which handles GitHub repository cloning and analysis.
+            analysis_results, anonymized_data = analyzer.check(self.repo_url, self.enable_groq_recheck)
+
+            # Ensure results are lists before emitting
+            if not isinstance(analysis_results, list):
+                analysis_results = [str(analysis_results)]
+            if not isinstance(anonymized_data, list):
+                anonymized_data = [str(anonymized_data)]
+
+            self.github_analysis_finished.emit(analysis_results, anonymized_data)
+        except Exception as e:
+            self.github_analysis_error.emit(f"An error occurred during GitHub analysis: {e}")
 
 
 # --- Main GUI Application Class ---
@@ -66,6 +84,7 @@ class PIIAnalyzerApp(QWidget):
 
         self.current_theme = "dark"  # Track current theme
         self.init_ui()
+        self.theme_toggle_button.clicked.connect(self.toggle_theme)  # Connect here after init_ui
         self.apply_theme(self.current_theme)  # Apply initial theme
 
     def init_ui(self):
@@ -86,7 +105,6 @@ class PIIAnalyzerApp(QWidget):
 
         # Theme toggle button
         self.theme_toggle_button = QPushButton("Toggle Light/Dark Mode")
-        self.theme_toggle_button.clicked.connect(self.toggle_theme)
         top_bar_layout.addWidget(self.theme_toggle_button)
         main_layout.addLayout(top_bar_layout)
 
@@ -95,13 +113,13 @@ class PIIAnalyzerApp(QWidget):
         self.tab_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_layout.addWidget(self.tab_widget)
 
-        # --- Text Analysis Tab ---
-        text_analysis_tab = QWidget()
-        text_analysis_layout = QVBoxLayout()
-        text_analysis_layout.setContentsMargins(15, 15, 15, 15)
-        text_analysis_layout.setSpacing(10)
-        text_analysis_tab.setLayout(text_analysis_layout)
-        self.tab_widget.addTab(text_analysis_tab, "Text Analysis")
+        # --- Directory Analysis Tab (now handles all local file types) ---
+        directory_analysis_tab = QWidget()
+        directory_analysis_layout = QVBoxLayout()
+        directory_analysis_layout.setContentsMargins(15, 15, 15, 15)
+        directory_analysis_layout.setSpacing(10)
+        directory_analysis_tab.setLayout(directory_analysis_layout)
+        self.tab_widget.addTab(directory_analysis_tab, "Local Directory Analysis")  # Renamed tab
 
         # Input for Directory Path
         dir_input_layout = QHBoxLayout()
@@ -109,7 +127,7 @@ class PIIAnalyzerApp(QWidget):
         self.dir_label = QLabel("Input Directory:")
         self.dir_label.setFixedWidth(120)  # Align labels
         self.dir_entry = QLineEdit()
-        self.dir_entry.setPlaceholderText("Enter path or browse for a directory")
+        self.dir_entry.setPlaceholderText("Enter path or browse for a directory containing text, images, or PDFs")
         self.browse_button = QPushButton("Browse...")
         self.browse_button.setFixedWidth(100)  # Consistent button width
         print("Attempting to connect browse_button...")  # Debug print
@@ -118,119 +136,58 @@ class PIIAnalyzerApp(QWidget):
         dir_input_layout.addWidget(self.dir_label)
         dir_input_layout.addWidget(self.dir_entry)
         dir_input_layout.addWidget(self.browse_button)
-        text_analysis_layout.addLayout(dir_input_layout)
+        directory_analysis_layout.addLayout(dir_input_layout)
 
-        # Analysis and Anonymized Data Display
-        results_layout = QHBoxLayout()
-        results_layout.setSpacing(15)
+        # Analysis and Anonymized Data Display for Local Directory
+        local_results_layout = QHBoxLayout()
+        local_results_layout.setSpacing(15)
 
         # Analysis Results
-        analysis_vbox = QVBoxLayout()
-        analysis_label = QLabel("Analysis Results:")
+        local_analysis_vbox = QVBoxLayout()
+        local_analysis_label = QLabel("Analysis Results:")
         self.analysis_text = QTextEdit()
         self.analysis_text.setReadOnly(True)
-        self.analysis_text.setPlaceholderText("Analysis results will appear here...")
-        analysis_vbox.addWidget(analysis_label)
-        analysis_vbox.addWidget(self.analysis_text)
-        results_layout.addLayout(analysis_vbox)
+        self.analysis_text.setPlaceholderText("Analysis results (from text, images, and PDFs) will appear here...")
+        local_analysis_vbox.addWidget(local_analysis_label)
+        local_analysis_vbox.addWidget(self.analysis_text)
+        local_results_layout.addLayout(local_analysis_vbox)
 
         # Anonymized Data
-        anonymized_vbox = QVBoxLayout()
-        anonymized_label = QLabel("Anonymized Data:")
+        local_anonymized_vbox = QVBoxLayout()
+        local_anonymized_label = QLabel("Anonymized Data:")
         self.anonymized_text = QTextEdit()
         self.anonymized_text.setReadOnly(True)
         self.anonymized_text.setPlaceholderText("Anonymized data will appear here...")
-        anonymized_vbox.addWidget(anonymized_label)
-        anonymized_vbox.addWidget(self.anonymized_text)
-        results_layout.addLayout(anonymized_vbox)
+        local_anonymized_vbox.addWidget(local_anonymized_label)
+        local_anonymized_vbox.addWidget(self.anonymized_text)
+        local_results_layout.addLayout(local_anonymized_vbox)
 
-        text_analysis_layout.addLayout(results_layout)
+        directory_analysis_layout.addLayout(local_results_layout)
 
-        # Buttons for Text Analysis
-        text_buttons_layout = QHBoxLayout()
-        text_buttons_layout.setSpacing(10)
-        self.run_analysis_button = QPushButton("Run Text Analysis")
-        self.clear_button = QPushButton("Clear Results")
-        print("Attempting to connect run_analysis_button...")  # Debug print for run_analysis_button
-        self.run_analysis_button.clicked.connect(self.start_analysis)
+        # Buttons for Local Directory Analysis
+        local_buttons_layout = QHBoxLayout()
+        local_buttons_layout.setSpacing(10)
+        self.run_local_analysis_button = QPushButton("Run Local Directory Analysis")  # Renamed button
+        self.clear_local_results_button = QPushButton("Clear Local Results")  # Renamed button
+        print("Attempting to connect run_local_analysis_button...")
+        self.run_local_analysis_button.clicked.connect(self.start_local_analysis)
+        self.clear_local_results_button.clicked.connect(self.clear_local_results)
 
-        text_buttons_layout.addStretch(1)  # Pushes buttons to the right
-        text_buttons_layout.addWidget(self.run_analysis_button)
-        text_buttons_layout.addWidget(self.clear_button)
-        text_buttons_layout.addStretch(1)
-        text_analysis_layout.addLayout(text_buttons_layout)
+        local_buttons_layout.addStretch(1)  # Pushes buttons to the right
+        local_buttons_layout.addWidget(self.run_local_analysis_button)
+        local_buttons_layout.addWidget(self.clear_local_results_button)
+        local_buttons_layout.addStretch(1)
+        directory_analysis_layout.addLayout(local_buttons_layout)
 
-        # --- Image Analysis Tab (Placeholder) ---
-        image_analysis_tab = QWidget()
-        image_analysis_layout = QVBoxLayout()
-        image_analysis_layout.setContentsMargins(15, 15, 15, 15)
-        image_analysis_layout.setSpacing(10)
-        image_analysis_tab.setLayout(image_analysis_layout)
-        self.tab_widget.addTab(image_analysis_tab, "Image Analysis")
-
-        image_label = QLabel("Image Analysis functionality will be added here.")
-        image_analysis_layout.addWidget(image_label)
-
-        image_file_input_layout = QHBoxLayout()
-        image_file_input_layout.setSpacing(10)
-        self.image_file_label = QLabel("Image File:")
-        self.image_file_label.setFixedWidth(120)
-        self.image_file_entry = QLineEdit()
-        self.image_file_entry.setPlaceholderText("Select an image file")
-        self.browse_image_button = QPushButton("Browse Image...")
-        self.browse_image_button.setFixedWidth(120)
-        print("Attempting to connect browse_image_button...")  # Debug print
-        self.browse_image_button.clicked.connect(self.browse_image_file)
-        image_file_input_layout.addWidget(self.image_file_label)
-        image_file_input_layout.addWidget(self.image_file_entry)
-        image_file_input_layout.addWidget(self.browse_image_button)
-        image_analysis_layout.addLayout(image_file_input_layout)
-
-        self.run_image_analysis_button = QPushButton("Run Image Analysis (Coming Soon)")
-        self.run_image_analysis_button.clicked.connect(self.show_coming_soon_message)
-        image_analysis_layout.addWidget(self.run_image_analysis_button, alignment=Qt.AlignCenter)
-        image_analysis_layout.addStretch(1)  # Push content to top
-
-        # --- PDF Analysis Tab (Placeholder) ---
-        pdf_analysis_tab = QWidget()
-        pdf_analysis_layout = QVBoxLayout()
-        pdf_analysis_layout.setContentsMargins(15, 15, 15, 15)
-        pdf_analysis_layout.setSpacing(10)
-        pdf_analysis_tab.setLayout(pdf_analysis_layout)
-        self.tab_widget.addTab(pdf_analysis_tab, "PDF Analysis")
-
-        pdf_label = QLabel("PDF Analysis functionality will be added here.")
-        pdf_analysis_layout.addWidget(pdf_label)
-
-        pdf_file_input_layout = QHBoxLayout()
-        pdf_file_input_layout.setSpacing(10)
-        self.pdf_file_label = QLabel("PDF File:")
-        self.pdf_file_label.setFixedWidth(120)
-        self.pdf_file_entry = QLineEdit()
-        self.pdf_file_entry.setPlaceholderText("Select a PDF file")
-        self.browse_pdf_button = QPushButton("Browse PDF...")
-        self.browse_pdf_button.setFixedWidth(120)
-        print("Attempting to connect browse_pdf_button...")  # Debug print
-        self.browse_pdf_button.clicked.connect(self.browse_pdf_file)
-        pdf_file_input_layout.addWidget(self.pdf_file_label)
-        pdf_file_input_layout.addWidget(self.pdf_file_entry)
-        pdf_file_input_layout.addWidget(self.browse_pdf_button)
-        pdf_analysis_layout.addLayout(pdf_file_input_layout)
-
-        self.run_pdf_analysis_button = QPushButton("Run PDF Analysis (Coming Soon)")
-        self.run_pdf_analysis_button.clicked.connect(self.show_coming_soon_message)
-        pdf_analysis_layout.addWidget(self.run_pdf_analysis_button, alignment=Qt.AlignCenter)
-        pdf_analysis_layout.addStretch(1)  # Push content to top
-
-        # --- GitHub Repository Analysis Tab (NEW) ---
+        # --- GitHub Repository Analysis Tab ---
         github_analysis_tab = QWidget()
         github_analysis_layout = QVBoxLayout()
         github_analysis_layout.setContentsMargins(15, 15, 15, 15)
         github_analysis_layout.setSpacing(10)
         github_analysis_tab.setLayout(github_analysis_layout)
-        self.tab_widget.addTab(github_analysis_tab, "GitHub Analysis")
+        self.tab_widget.addTab(github_analysis_tab, "GitHub Repository Analysis")
 
-        github_label = QLabel("GitHub Repository Analysis functionality will be added here.")
+        github_label = QLabel("Enter a GitHub repository URL to clone and scan for PII.")
         github_analysis_layout.addWidget(github_label)
 
         github_repo_input_layout = QHBoxLayout()
@@ -238,17 +195,53 @@ class PIIAnalyzerApp(QWidget):
         self.github_repo_label = QLabel("Repository URL:")
         self.github_repo_label.setFixedWidth(120)
         self.github_repo_entry = QLineEdit()
-        self.github_repo_entry.setPlaceholderText("e.g., https://github.com/user/repo")
+        self.github_repo_entry.setPlaceholderText("e.g., https://github.com/user/repo.git")
         github_repo_input_layout.addWidget(self.github_repo_label)
         github_repo_input_layout.addWidget(self.github_repo_entry)
         github_analysis_layout.addLayout(github_repo_input_layout)
 
-        self.run_github_analysis_button = QPushButton("Scan Repository (Coming Soon)")
-        self.run_github_analysis_button.clicked.connect(self.show_coming_soon_message)
-        github_analysis_layout.addWidget(self.run_github_analysis_button, alignment=Qt.AlignCenter)
-        github_analysis_layout.addStretch(1)
+        # Analysis and Anonymized Data Display for GitHub
+        github_results_layout = QHBoxLayout()
+        github_results_layout.setSpacing(15)
 
-        # --- Email Data Leak Search Tab (NEW) ---
+        # Analysis Results
+        github_analysis_vbox = QVBoxLayout()
+        github_analysis_label = QLabel("GitHub Analysis Results:")
+        self.github_analysis_text = QTextEdit()
+        self.github_analysis_text.setReadOnly(True)
+        self.github_analysis_text.setPlaceholderText("Analysis results from GitHub repository will appear here...")
+        github_analysis_vbox.addWidget(github_analysis_label)
+        github_analysis_vbox.addWidget(self.github_analysis_text)
+        github_results_layout.addLayout(github_analysis_vbox)
+
+        # Anonymized Data
+        github_anonymized_vbox = QVBoxLayout()
+        github_anonymized_label = QLabel("GitHub Anonymized Data:")
+        self.github_anonymized_text = QTextEdit()
+        self.github_anonymized_text.setReadOnly(True)
+        self.github_anonymized_text.setPlaceholderText("Anonymized data from GitHub repository will appear here...")
+        github_anonymized_vbox.addWidget(github_anonymized_label)
+        github_anonymized_vbox.addWidget(self.github_anonymized_text)
+        github_results_layout.addLayout(github_anonymized_vbox)
+
+        github_analysis_layout.addLayout(github_results_layout)
+
+        # Buttons for GitHub Analysis
+        github_buttons_layout = QHBoxLayout()
+        github_buttons_layout.setSpacing(10)
+        self.run_github_analysis_button = QPushButton("Scan Repository")
+        self.clear_github_results_button = QPushButton("Clear GitHub Results")
+        print("Attempting to connect run_github_analysis_button...")
+        self.run_github_analysis_button.clicked.connect(self.start_github_analysis)
+        self.clear_github_results_button.clicked.connect(self.clear_github_results)
+
+        github_buttons_layout.addStretch(1)
+        github_buttons_layout.addWidget(self.run_github_analysis_button)
+        github_buttons_layout.addWidget(self.clear_github_results_button)
+        github_buttons_layout.addStretch(1)
+        github_analysis_layout.addLayout(github_buttons_layout)
+
+        # --- Email Data Leak Search Tab (Placeholder) ---
         email_leak_tab = QWidget()
         email_leak_layout = QVBoxLayout()
         email_leak_layout.setContentsMargins(15, 15, 15, 15)
@@ -285,93 +278,120 @@ class PIIAnalyzerApp(QWidget):
         else:
             QMessageBox.information(self, "No Selection", "No directory was selected.")
 
-    def browse_image_file(self):
-        print("Inside browse_image_file function!")  # Debug print
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select Image File", "",
-                                                   "Image Files (*.png *.jpg *.jpeg *.gif)")
-        if file_path:
-            self.image_file_entry.setText(file_path)
-            QMessageBox.information(self, "Image File Selected", f"Selected: {file_path}")
-        else:
-            QMessageBox.information(self, "No Selection", "No image file was selected.")
-
-    def browse_pdf_file(self):
-        print("Inside browse_pdf_file function!")  # Debug print
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select PDF File", "", "PDF Files (*.pdf)")
-        if file_path:
-            self.pdf_file_entry.setText(file_path)
-            QMessageBox.information(self, "PDF File Selected", f"Selected: {file_path}")
-        else:
-            QMessageBox.information(self, "No Selection", "No PDF file was selected.")
-
-    def start_analysis(self):
-        print("Inside start_analysis function!")  # Debug print for start_analysis
+    def start_local_analysis(self):
+        print("Inside start_local_analysis function!")  # Debug print
         indir = self.dir_entry.text()
         if not indir:
             QMessageBox.warning(self, "Input Error", "Please enter a directory path.")
             return
+        if not os.path.isdir(indir):
+            QMessageBox.warning(self, "Input Error", "The provided path is not a valid directory.")
+            return
 
-        self.analysis_text.setText("Analyzing...")
+        self.analysis_text.setText("Analyzing local directory...")
         self.anonymized_text.setText("Anonymizing...")
         self.set_buttons_enabled(False)  # Disable buttons during analysis
 
-        # Get Groq recheck state from the checkbox
         enable_groq_recheck = self.groq_recheck_checkbox.isChecked()
 
-        # Create and start the worker thread, passing the Groq recheck state
         self.worker = PIIAnalysisWorker(indir, enable_groq_recheck)
-        self.worker.analysis_finished.connect(self.display_results)
-        self.worker.analysis_error.connect(self.handle_analysis_error)
+        self.worker.analysis_finished.connect(self.display_local_results)
+        self.worker.analysis_error.connect(self.handle_local_analysis_error)
         self.worker.start()
 
-    def display_results(self, analysis_results, anonymized_data):
-        # Display analysis results
+    def start_github_analysis(self):
+        print("Inside start_github_analysis function!")  # Debug print
+        repo_url = self.github_repo_entry.text()
+        if not repo_url:
+            QMessageBox.warning(self, "Input Error", "Please enter a GitHub repository URL.")
+            return
+        if not (repo_url.startswith("http://") or repo_url.startswith("https://")) or "github.com" not in repo_url:
+            QMessageBox.warning(self, "Input Error",
+                                "Please enter a valid GitHub repository URL (e.g., https://github.com/user/repo.git).")
+            return
+
+        self.github_analysis_text.setText("Cloning and analyzing GitHub repository...")
+        self.github_anonymized_text.setText("Anonymizing...")
+        self.set_buttons_enabled(False)  # Disable buttons during analysis
+
+        enable_groq_recheck = self.groq_recheck_checkbox.isChecked()
+
+        self.github_worker = GitHubAnalysisWorker(repo_url, enable_groq_recheck)
+        self.github_worker.github_analysis_finished.connect(self.display_github_results)
+        self.github_worker.github_analysis_error.connect(self.handle_github_analysis_error)
+        self.github_worker.start()
+
+    def display_local_results(self, analysis_results, anonymized_data):
         if analysis_results:
             self.analysis_text.setText("\n".join(analysis_results))
         else:
             self.analysis_text.setText("No sensitive data detected.")
 
-        # Display anonymized data
         if anonymized_data:
             self.anonymized_text.setText("\n".join(anonymized_data))
         else:
             self.anonymized_text.setText("No data to anonymize or no sensitive data found.")
 
-        self.set_buttons_enabled(True)  # Re-enable buttons
+        self.set_buttons_enabled(True)
 
-    def handle_analysis_error(self, error_message):
-        QMessageBox.critical(self, "Analysis Error", error_message)
+    def display_github_results(self, analysis_results, anonymized_data):
+        if analysis_results:
+            self.github_analysis_text.setText("\n".join(analysis_results))
+        else:
+            self.github_analysis_text.setText("No sensitive data detected in GitHub repository.")
+
+        if anonymized_data:
+            self.github_anonymized_text.setText("\n".join(anonymized_data))
+        else:
+            self.github_anonymized_text.setText("No data to anonymize or no sensitive data found in GitHub repository.")
+
+        self.set_buttons_enabled(True)
+
+    def handle_local_analysis_error(self, error_message):
+        QMessageBox.critical(self, "Local Analysis Error", error_message)
         self.analysis_text.setText(f"Error: {error_message}")
         self.anonymized_text.setText("Error during anonymization.")
-        self.set_buttons_enabled(True)  # Re-enable buttons
+        self.set_buttons_enabled(True)
 
-    def clear_results(self):
+    def handle_github_analysis_error(self, error_message):
+        QMessageBox.critical(self, "GitHub Analysis Error", error_message)
+        self.github_analysis_text.setText(f"Error: {error_message}")
+        self.github_anonymized_text.setText("Error during anonymization.")
+        self.set_buttons_enabled(True)
+
+    def clear_local_results(self):
         self.dir_entry.clear()
         self.analysis_text.clear()
         self.anonymized_text.clear()
-        self.image_file_entry.clear()
-        self.pdf_file_entry.clear()
-        self.github_repo_entry.clear()  # Clear new entries
-        self.email_entry.clear()  # Clear new entries
         self.groq_recheck_checkbox.setChecked(False)  # Reset Groq recheck checkbox
-        QMessageBox.information(self, "Cleared", "All results and inputs cleared.")
+        QMessageBox.information(self, "Cleared", "Local directory analysis results and inputs cleared.")
+
+    def clear_github_results(self):
+        self.github_repo_entry.clear()
+        self.github_analysis_text.clear()
+        self.github_anonymized_text.clear()
+        self.groq_recheck_checkbox.setChecked(False)  # Reset Groq recheck checkbox
+        QMessageBox.information(self, "Cleared", "GitHub analysis results and inputs cleared.")
 
     def show_coming_soon_message(self):
         QMessageBox.information(self, "Feature Coming Soon",
                                 "This feature is under development and will be available in a future update!")
 
     def set_buttons_enabled(self, enabled):
-        self.run_analysis_button.setEnabled(enabled)
+        # Local Analysis Buttons
+        self.run_local_analysis_button.setEnabled(enabled)
         self.browse_button.setEnabled(enabled)
-        self.clear_button.setEnabled(enabled)
+        self.clear_local_results_button.setEnabled(enabled)
+
+        # GitHub Analysis Buttons
+        self.run_github_analysis_button.setEnabled(enabled)
+        self.clear_github_results_button.setEnabled(enabled)
+        self.github_repo_entry.setEnabled(enabled)  # Enable/disable input field too
+
         self.groq_recheck_checkbox.setEnabled(enabled)  # Enable/disable checkbox
-        # Disable placeholder buttons as well if analysis is running
-        self.run_image_analysis_button.setEnabled(enabled)
-        self.browse_image_button.setEnabled(enabled)
-        self.run_pdf_analysis_button.setEnabled(enabled)
-        self.browse_pdf_button.setEnabled(enabled)
-        self.run_github_analysis_button.setEnabled(enabled)  # New button
-        self.run_email_leak_button.setEnabled(enabled)  # New button
+
+        # Placeholder buttons
+        self.run_email_leak_button.setEnabled(enabled)
 
     def toggle_theme(self):
         if self.current_theme == "dark":
@@ -624,7 +644,7 @@ class PIIAnalyzerApp(QWidget):
                     background-color: #007bff;
                     border: 1px solid #007bff;
                     /* Base64 encoded SVG for a simple checkmark */
-                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiHN0cm9rZS1liW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBvbHlsaW5lIHBvaW50cz0iMjAgNiA5IDE3IDQgMTIiPjwvcG9seWxpbmU+PC9zdmc+);
+                    image: url(data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxNiIgaGVpZ2h0PSIxNiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBvbHlsaW5lIHBvaW50cz0iMjAgNiA5IDE3IDQgMTIiPjwvcG9seWxpbmU+PC9zdmc+);
                 }
                 QCheckBox::indicator:disabled {
                     background-color: #e0e0e0;
