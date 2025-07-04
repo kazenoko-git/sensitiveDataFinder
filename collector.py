@@ -22,8 +22,6 @@ class chk:
             except Exception as e:
                 print(f"Error downloading spaCy model: {e}")
                 print("Please try running 'python -m spacy download en_core_web_lg' manually from your terminal.")
-                # Depending on severity, you might want to sys.exit(1) here
-            # --- End: Fix for spaCy model not found ---
 
         configuration = {
             "nlp_engine_name": "spacy",
