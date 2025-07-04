@@ -21,19 +21,25 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas as reportlab_canvas
 from reportlab.lib.utils import ImageReader
 
+with open("settings.txt", "r") as f: dt = str(f.read()).split(';')
+pytesseract.pytesseract.tesseract_cmd = rf'{dt[0].split("=")[1]}'
+poppler_path = rf'{dt[1].split("=")[1]}'
+
 # --- Configuration ---
 # Set the path to the Tesseract executable if it's not in your system's PATH.
 # Replace 'C:/Program Files/Tesseract-OCR/tesseract.exe' with your actual path.
 # For macOS/Linux, if you installed via brew/apt-get, it might be automatically found.
 # If you get a 'pytesseract.TesseractNotFoundError', uncomment and adjust this line.
-pytesseract.pytesseract.tesseract_cmd = r'/opt/homebrew/bin/tesseract'
+# pytesseract.pytesseract.tesseract_cmd = r''
 
 # Set the path to the Poppler 'bin' directory if it's not in your system's PATH.
 # This is required by pdf2image.
 # Replace 'C:/Program Files/poppler-XX/bin' with your actual path.
 # If you get a 'pdf2image.exceptions.PopplerNotInstalledError', uncomment and adjust this line.
 # poppler_path = r'C:/Program Files/poppler-24.02.0/Library/bin' # Example path for Windows
-poppler_path = r'/opt/homebrew/opt/poppler/bin/' # Default to None, relying on system PATH or user configuration
+#poppler_path = r'' # Default to None, relying on system PATH or user configuration
+
+
 
 def image_to_text(image_path: str) -> str:
     """
