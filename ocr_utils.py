@@ -21,9 +21,11 @@ from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas as reportlab_canvas
 from reportlab.lib.utils import ImageReader
 
-with open("settings.txt", "r") as f: dt = str(f.read()).split(';')
-pytesseract.pytesseract.tesseract_cmd = rf'{dt[0].split("=")[1]}'
-poppler_path = rf'{dt[1].split("=")[1]}'
+# UNCOMMENT LINES 26-28 AS NECESSARY
+
+#  with open("settings.txt", "r") as f: dt = str(f.read()).split(';')
+#  pytesseract.pytesseract.tesseract_cmd = rf'{dt[0].split("=")[1]}'
+#  poppler_path = rf'{dt[1].split("=")[1]}'
 
 # --- Configuration ---
 # Set the path to the Tesseract executable if it's not in your system's PATH.
