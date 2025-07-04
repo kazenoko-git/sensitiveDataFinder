@@ -1,0 +1,1 @@
+ts=tesseract_dir;plr=poppler_dir;tkn=groq_api_key
