@@ -1,27 +1,20 @@
 import os, string, sys, tempfile
-# Import OCR functions from ocr_utils.py
-try:
-    from ocr_utils import image_to_text, pdf_to_text
+try: from ocr_utils import image_to_text, pdf_to_text
 except ImportError:
     print("ERROR: Could not import OCR functions from 'ocr_utils.py'.")
     print(
         "Please ensure 'ocr_utils.py' is in the same directory and necessary libraries (Pillow, pytesseract, pdf2image, reportlab) are installed.")
     sys.exit(1)
-
-# Import GitHub functions from github_handler.py
-try:
-    from gitHandler import clone_repository, cleanup_repository
+try: from gitHandler import clone_repository, cleanup_repository
 except ImportError:
     print("ERROR: Could not import GitHub functions from 'gitHandler.py'.")
     print("Please ensure 'gitHandler.py' is in the same directory and Git is installed.")
     sys.exit(1)
 
-# Define supported extensions globally for use in get_files
 TEXT_EXTENSIONS = ('.txt', '.TXT', '.log', '.csv', '.json', '.xml', '.html', '.py', '.md', '.yml', '.ini', '')
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp')
 PDF_EXTENSIONS = ('.pdf',)
 ALL_SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS + IMAGE_EXTENSIONS + PDF_EXTENSIONS
-
 
 def get_files(input_path: str) -> list[str]:
     """
@@ -151,9 +144,9 @@ def get_data(input_source: str) -> list[str]:
         if temp_dir:
             cleanup_repository(temp_dir)
 
-
+# Test
+"""
 if __name__ == "__main__":
-    # Example Usage:
     test_dir = "test_data_combined"
     os.makedirs(test_dir, exist_ok=True)
 
@@ -216,15 +209,14 @@ if __name__ == "__main__":
     github_data = get_data(github_test_url)
     print("\nFull Contents from GitHub repository (first 2 items):")
     if github_data:
-        for i, content in enumerate(github_data[:2]):  # Print first 2 items to avoid spamming
+        for i, content in enumerate(github_data[:2]):  
             print(f"--- GitHub File {i + 1} ---\n{content}\n-----------------")
         if len(github_data) > 2:
             print(f"... and {len(github_data) - 2} more files.")
     else:
         print("No data extracted from GitHub repository.")
-
     import shutil
-
     if os.path.exists(test_dir):
         shutil.rmtree(test_dir)
         print(f"\nCleaned up {test_dir}")
+"""
