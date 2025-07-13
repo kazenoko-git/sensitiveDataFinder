@@ -3,9 +3,8 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLineEdit, QTextEdit, QLabel, QFileDialog, QMessageBox, QTabWidget, QSizePolicy, QCheckBox
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-import os  # Import os for path validation
-
+from PyQt5.QtCore import QThread, pyqtSignal
+import os
 try:
     from collector import chk
 except ImportError:
@@ -27,8 +26,6 @@ class PIIAnalysisWorker(QThread):
     def run(self):
         try:
             analyzer = chk()
-            # The chk.check method will now use the updated fileHandler.get_data
-            # which handles text, image, and PDF files.
             analysis_results, anonymized_data = analyzer.check(self.indir, self.enable_groq_recheck)
 
             # Ensure analysis_results is a list
@@ -59,8 +56,6 @@ class GitHubAnalysisWorker(QThread):
     def run(self):
         try:
             analyzer = chk()
-            # The chk.check method will now use the updated fileHandler.get_data
-            # which handles GitHub repository cloning and analysis.
             analysis_results, anonymized_data = analyzer.check(self.repo_url, self.enable_groq_recheck)
 
             # Ensure results are lists before emitting
@@ -88,7 +83,8 @@ class PIIAnalyzerApp(QWidget):
         self.apply_theme(self.current_theme)  # Apply initial theme
 
     def init_ui(self):
-        print("Initializing UI...")  # Debug print at the start of UI initialization
+        print("Initializing UI...")
+
         # Main layout for the entire application
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(20, 20, 20, 20)  # Add padding around the main window
@@ -119,7 +115,7 @@ class PIIAnalyzerApp(QWidget):
         directory_analysis_layout.setContentsMargins(15, 15, 15, 15)
         directory_analysis_layout.setSpacing(10)
         directory_analysis_tab.setLayout(directory_analysis_layout)
-        self.tab_widget.addTab(directory_analysis_tab, "Local Directory Analysis")  # Renamed tab
+        self.tab_widget.addTab(directory_analysis_tab, "Local Directory Analysis")
 
         # Input for Directory Path
         dir_input_layout = QHBoxLayout()
@@ -130,7 +126,7 @@ class PIIAnalyzerApp(QWidget):
         self.dir_entry.setPlaceholderText("Enter path or browse for a directory containing text, images, or PDFs")
         self.browse_button = QPushButton("Browse...")
         self.browse_button.setFixedWidth(100)  # Consistent button width
-        print("Attempting to connect browse_button...")  # Debug print
+        print("Attempting to connect browse_button...")
         self.browse_button.clicked.connect(self.browse_directory)
 
         dir_input_layout.addWidget(self.dir_label)
@@ -167,8 +163,8 @@ class PIIAnalyzerApp(QWidget):
         # Buttons for Local Directory Analysis
         local_buttons_layout = QHBoxLayout()
         local_buttons_layout.setSpacing(10)
-        self.run_local_analysis_button = QPushButton("Run Local Directory Analysis")  # Renamed button
-        self.clear_local_results_button = QPushButton("Clear Local Results")  # Renamed button
+        self.run_local_analysis_button = QPushButton("Run Local Directory Analysis")
+        self.clear_local_results_button = QPushButton("Clear Local Results")
         print("Attempting to connect run_local_analysis_button...")
         self.run_local_analysis_button.clicked.connect(self.start_local_analysis)
         self.clear_local_results_button.clicked.connect(self.clear_local_results)
@@ -270,7 +266,7 @@ class PIIAnalyzerApp(QWidget):
         self.setLayout(main_layout)
 
     def browse_directory(self):
-        print("Inside browse_directory function!")  # Debug print
+        print("Inside browse_directory function!")
         directory = QFileDialog.getExistingDirectory(self, "Select Directory")
         if directory:
             self.dir_entry.setText(directory)
@@ -279,7 +275,7 @@ class PIIAnalyzerApp(QWidget):
             QMessageBox.information(self, "No Selection", "No directory was selected.")
 
     def start_local_analysis(self):
-        print("Inside start_local_analysis function!")  # Debug print
+        print("Inside start_local_analysis function!")
         indir = self.dir_entry.text()
         if not indir:
             QMessageBox.warning(self, "Input Error", "Please enter a directory path.")
@@ -300,7 +296,7 @@ class PIIAnalyzerApp(QWidget):
         self.worker.start()
 
     def start_github_analysis(self):
-        print("Inside start_github_analysis function!")  # Debug print
+        print("Inside start_github_analysis function!")
         repo_url = self.github_repo_entry.text()
         if not repo_url:
             QMessageBox.warning(self, "Input Error", "Please enter a GitHub repository URL.")
