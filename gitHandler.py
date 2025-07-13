@@ -64,6 +64,10 @@ def cleanup_repository(local_path: str) -> bool:
         print(f"No repository found at '{local_path}' to clean up.")
         return True # Considered successful if nothing to remove
 
+
+# Test
+
+"""
 if __name__ == "__main__":
     # Example Usage:
     test_repo_url = "https://github.com/git/git.git" # A public, small repository for testing
@@ -89,3 +93,4 @@ if __name__ == "__main__":
     else:
         print("Cloning invalid URL test failed (unexpected success).")
     cleanup_repository("invalid_repo") # Clean up if it somehow got created
+"""
