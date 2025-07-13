@@ -8,7 +8,6 @@ import os, spacy
 with open("settings.txt", "r") as f: dt = str(f.read()).split(';')
 key = rf'{dt[2].split("=")[1]}'
 
-
 class chk:
     def __init__(self):
         try:
@@ -22,6 +21,8 @@ class chk:
             except Exception as e:
                 print(f"Error downloading spaCy model: {e}")
                 print("Please try running 'python -m spacy download en_core_web_lg' manually from your terminal.")
+                # Depending on severity, you might want to sys.exit(1) here
+            # --- End: Fix for spaCy model not found ---
 
         configuration = {
             "nlp_engine_name": "spacy",
@@ -30,10 +31,6 @@ class chk:
             ],
         }
         self.pilot = Groq(api_key=key)
-
-        # Initialize memory for Groq. This will be used for the one-word True/False check.
-        # Refined system prompt for better filtering context
-        # Emphasize "real-world, identifiable instance" and provide more negative examples
         self.memory = [{"role": "system", "content": """You are a highly accurate PII classification assistant. Your task is to determine if the provided text is a real-world, identifiable instance of the specified sensitive data type, *not* just a string that happens to match a pattern in a technical context (like a configuration value, a random ID, a common word, or a code snippet). Respond with only one word: 'True' if it is a real-world PII, or 'False' if it is not. Do not provide any other text or explanation.
 
 Examples:
@@ -98,7 +95,6 @@ Examples:
         )
         # NEW: API Key pattern (a generic pattern for common API key formats)
         # This pattern looks for common prefixes like 'sk-', 'AKIA', 'SG.', 'pk_', 'Bearer ' followed by alphanumeric characters and symbols.
-        # It's designed to be somewhat broad to catch various keys, but relies on Groq for filtering.
         api_key_pattern = Pattern(
             name="api_key_pattern",
             regex=r"\b(?:sk-|AKIA|SG\.|pk_|Bearer\s|xoxb-|EAACEdEose|ya29\.[a-zA-Z0-9_-]+|AIza[0-9A-Za-z-_]{35}|[A-Za-z0-9-_]{20,40}(?:\.[A-Za-z0-9-_]{20,40})?)\b",
@@ -147,9 +143,8 @@ Examples:
         self.analyzer.registry.add_recognizer(ssh_key_recognizer)
         self.analyzer.registry.add_recognizer(aadhaar_recognizer)
         self.analyzer.registry.add_recognizer(pan_recognizer)
-        self.analyzer.registry.add_recognizer(api_key_recognizer)  # Add new API Key recognizer
+        self.analyzer.registry.add_recognizer(api_key_recognizer) 
 
-        # These lists will store the aggregated results from the check method
         self.analysis = []
         self.anonymizedData = []
 
@@ -167,13 +162,12 @@ Examples:
                   - self.analysis: Details of detected entities (type, value, score).
                   - self.anonymizedData: The anonymized versions of the input texts.
         """
-        # Get data using the fileHandler, which now returns full file contents
+        # Get data using the fileHandler
         sample_full_texts = fH.get_data(rf"{indir}")
         print(f"\n--- Starting PII Analysis for {len(sample_full_texts)} items ---")
 
         # Define the Groq generation function with retry logic
         def gen(dt, data, retries=3) -> str:
-            # Create a temporary copy of memory to avoid modifying self.memory for this specific call
             temp_memory = list(self.memory)
             # Refined user prompt for better filtering
             temp_memory.append({"role": "user",
@@ -181,7 +175,6 @@ Examples:
 
             for attempt in range(retries):
                 try:
-                    # Call Groq API and correctly parse the response to get the text content
                     res_obj = self.pilot.chat.completions.create(model="llama3-70b-8192", messages=temp_memory,
                                                                  max_tokens=8)
                     res_text = res_obj.choices[0].message.content.strip()
@@ -207,18 +200,16 @@ Examples:
             print(f"\n--- Analyzing Text: '{item_text}' ---")
 
             # Analyze the text for sensitive entities
-            # Updated entities list to include new PII types
             results = self.analyzer.analyze(
                 text=item_text,
                 language="en",
                 entities=["EMAIL_ADDRESS", "CREDIT_CARD", "PHONE_NUMBER", "US_SSN", "PERSON", "ADDRESS", "PASSWORD",
-                          "SSH_KEY", "AADHAAR_NUMBER", "PAN_NUMBER", "API_KEY"],  # Added new API_KEY entity
+                          "SSH_KEY", "AADHAAR_NUMBER", "PAN_NUMBER", "API_KEY"], 
                 return_decision_process=True
             )
 
-            # Filter results based on Groq recheck if enabled
             filtered_results = []
-            current_item_analysis_entries = []  # Store analysis for current item
+            current_item_analysis_entries = [] 
 
             for result in results:
                 entity_value = item_text[result.start:result.end]
@@ -285,7 +276,9 @@ Examples:
         return [self.analysis, self.anonymizedData]
 
 
-# --- Main execution block ---
+# Test
+
+"""
 if __name__ == "__main__":
     a = chk()
     # Example usage with Groq recheck enabled/disabled
@@ -329,3 +322,5 @@ if __name__ == "__main__":
     if os.path.exists(test_dir):
         shutil.rmtree(test_dir)
         print(f"\nCleaned up {test_dir}")
+
+"""
