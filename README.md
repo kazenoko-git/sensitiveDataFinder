@@ -48,6 +48,6 @@ The program scans data over any directory given, identifying the sensitive data 
 Note that there can be many False Positives when not using Groq Rechecker.
 
 **Supported File-types**
-.txt, .log, .csv, .json, .xml, .html, .py, .md, .yml, .ini, .png, .jpg, .jpeg, .gif, .bmp, .tiff, .webp, .pdf
+> .txt, .log, .csv, .json, .xml, .html, .py, .md, .yml, .ini, .png, .jpg, .jpeg, .gif, .bmp, .tiff, .webp, .pdf
 
 
