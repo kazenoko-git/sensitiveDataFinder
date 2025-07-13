@@ -12,22 +12,6 @@
 # For macOS: brew install poppler
 # For Linux (Debian/Ubuntu): sudo apt-get install poppler-utils
 
-# Import the necessary libraries
-from PIL import Image, ImageDraw, ImageFont
-import pytesseract
-import os
-from pdf2image import convert_from_path, exceptions as pdf2image_exceptions
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas as reportlab_canvas
-from reportlab.lib.utils import ImageReader
-
-# UNCOMMENT LINES 26-28 AS NECESSARY
-
-#  with open("settings.txt", "r") as f: dt = str(f.read()).split(';')
-#  pytesseract.pytesseract.tesseract_cmd = rf'{dt[0].split("=")[1]}'
-#  poppler_path = rf'{dt[1].split("=")[1]}'
-
-# --- Configuration ---
 # Set the path to the Tesseract executable if it's not in your system's PATH.
 # Replace 'C:/Program Files/Tesseract-OCR/tesseract.exe' with your actual path.
 # For macOS/Linux, if you installed via brew/apt-get, it might be automatically found.
@@ -38,10 +22,18 @@ from reportlab.lib.utils import ImageReader
 # This is required by pdf2image.
 # Replace 'C:/Program Files/poppler-XX/bin' with your actual path.
 # If you get a 'pdf2image.exceptions.PopplerNotInstalledError', uncomment and adjust this line.
-# poppler_path = r'C:/Program Files/poppler-24.02.0/Library/bin' # Example path for Windows
-#poppler_path = r'' # Default to None, relying on system PATH or user configuration
 
+from PIL import Image, ImageDraw, ImageFont
+import pytesseract, os
+from pdf2image import convert_from_path, exceptions as pdf2image_exceptions
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas as reportlab_canvas
+from reportlab.lib.utils import ImageReader
 
+with open("settings.txt", "r") as f: dt = str(f.read()).split(';')
+pytesseract.pytesseract.tesseract_cmd = rf'{dt[0].split("=")[1]}' # replace in settings.txt or here with the raw dir
+poppler_path = rf'{dt[1].split("=")[1]}' # replace in settings.txt or here with the raw dir
+# Default to None to rely on system PATH
 
 def image_to_text(image_path: str) -> str:
     """
@@ -58,12 +50,7 @@ def image_to_text(image_path: str) -> str:
         return ""
 
     try:
-        # Open the image using Pillow
         img = Image.open(image_path)
-
-        # Use pytesseract to perform OCR on the image
-        # You can specify the language using the 'lang' parameter, e.g., lang='eng' for English.
-        # For multiple languages, use '+', e.g., lang='eng+fra'
         text = pytesseract.image_to_string(img)
 
         return text
@@ -92,23 +79,18 @@ def pdf_to_text(pdf_path: str) -> str:
         return ""
 
     full_text = []
-    temp_image_files = [] # To keep track of temporary image files for cleanup
+    temp_image_files = []
 
     try:
-        # Convert PDF pages to a list of PIL Image objects
-        # dpi can be adjusted for better quality (higher DPI) or faster processing (lower DPI)
         print(f"Converting PDF '{pdf_path}' to images...")
         pages = convert_from_path(pdf_path, dpi=300, poppler_path=poppler_path)
         print(f"Successfully converted {len(pages)} pages to images.")
 
         for i, page_image in enumerate(pages):
-            # Save each page image temporarily to a file
             temp_image_path = f"temp_page_{i+1}.png"
             page_image.save(temp_image_path, 'PNG')
             temp_image_files.append(temp_image_path)
             print(f"Processing page {i+1}...")
-
-            # Use the existing image_to_text function to extract text from the page image
             page_text = image_to_text(temp_image_path)
             if page_text:
                 full_text.append(f"\n--- Page {i+1} ---\n")
@@ -125,10 +107,8 @@ def pdf_to_text(pdf_path: str) -> str:
         print(f"An error occurred during PDF to text conversion: {e}")
         return ""
     finally:
-        # Clean up all temporary image files
         for temp_file in temp_image_files:
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
+            if os.path.exists(temp_file): os.remove(temp_file)
                 # print(f"Cleaned up temporary image: {temp_file}")
 
     return "".join(full_text)
@@ -158,7 +138,6 @@ def create_dummy_pdf(pdf_path: str, text_content: str, include_image: bool = Fal
     if include_image and image_path and os.path.exists(image_path):
         try:
             img_reader = ImageReader(image_path)
-            # Draw image at (x, y, width, height)
             c.drawImage(img_reader, 50, 500, width=200, height=100)
             print(f"Embedded image '{image_path}' into PDF.")
         except Exception as e:
@@ -169,9 +148,10 @@ def create_dummy_pdf(pdf_path: str, text_content: str, include_image: bool = Fal
     c.save()
     print(f"Dummy PDF '{pdf_path}' created for testing.")
 
-# --- Example Usage ---
+# Test
+
+"""
 if __name__ == "__main__":
-    # --- Image to Text Example ---
     dummy_image_path = "sample_image_with_text.png"
     try:
         img_width, img_height = 800, 400
@@ -242,3 +222,4 @@ if __name__ == "__main__":
         if os.path.exists(dummy_image_path):
             os.remove(dummy_image_path)
             print(f"Cleaned up dummy image '{dummy_image_path}'.")
+"""
