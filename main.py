@@ -67,7 +67,7 @@ class GitHubAnalysisWorker(QThread):
 class PIIAnalyzerApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PII Analyzer")
+        self.setWindowTitle("SDFr v0.1.0-beta")
         self.setGeometry(100, 100, 1000, 700)
         self.setMinimumSize(800, 600)
         self.current_theme = "dark"
