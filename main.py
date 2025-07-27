@@ -6,10 +6,10 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import QThread, pyqtSignal
 import os
 try:
-    from collector import chk
+    from analyzer import CHK
 except ImportError:
-    print("ERROR: Could not import 'chk' class from 'collector.py'.")
-    print("Please ensure 'collector.py' is in the same directory.")
+    print("ERROR: Could not import 'chk' class from 'analyzer.py'.")
+    print("Please ensure 'analyzer.py' is in the same directory.")
     sys.exit(1)
 
 
@@ -25,7 +25,7 @@ class PIIAnalysisWorker(QThread):
 
     def run(self):
         try:
-            analyzer = chk()
+            analyzer = CHK()
             analysis_results, anonymized_data = analyzer.check(self.indir, self.enable_groq_recheck)
 
             # Ensure analysis_results is a list
@@ -55,7 +55,7 @@ class GitHubAnalysisWorker(QThread):
 
     def run(self):
         try:
-            analyzer = chk()
+            analyzer = CHK()
             analysis_results, anonymized_data = analyzer.check(self.repo_url, self.enable_groq_recheck)
 
             # Ensure results are lists before emitting
