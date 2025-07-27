@@ -3,12 +3,12 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine, OperatorConfig
 import fileHandler as fH
 from groq import Groq
-import os, spacy
+import spacy
 
 with open("settings.txt", "r") as f: dt = str(f.read()).split(';')
 key = rf'{dt[2].split("=")[1]}'
 
-class chk:
+class CHK:
     def __init__(self):
         try:
             spacy.load("en_core_web_lg")
@@ -93,7 +93,6 @@ Examples:
             regex=r"\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b",
             score=0.9
         )
-        # NEW: API Key pattern (a generic pattern for common API key formats)
         # This pattern looks for common prefixes like 'sk-', 'AKIA', 'SG.', 'pk_', 'Bearer ' followed by alphanumeric characters and symbols.
         api_key_pattern = Pattern(
             name="api_key_pattern",
@@ -143,7 +142,7 @@ Examples:
         self.analyzer.registry.add_recognizer(ssh_key_recognizer)
         self.analyzer.registry.add_recognizer(aadhaar_recognizer)
         self.analyzer.registry.add_recognizer(pan_recognizer)
-        self.analyzer.registry.add_recognizer(api_key_recognizer) 
+        self.analyzer.registry.add_recognizer(api_key_recognizer)
 
         self.analysis = []
         self.anonymizedData = []
@@ -204,12 +203,12 @@ Examples:
                 text=item_text,
                 language="en",
                 entities=["EMAIL_ADDRESS", "CREDIT_CARD", "PHONE_NUMBER", "US_SSN", "PERSON", "ADDRESS", "PASSWORD",
-                          "SSH_KEY", "AADHAAR_NUMBER", "PAN_NUMBER", "API_KEY"], 
+                          "SSH_KEY", "AADHAAR_NUMBER", "PAN_NUMBER", "API_KEY"],
                 return_decision_process=True
             )
 
             filtered_results = []
-            current_item_analysis_entries = [] 
+            current_item_analysis_entries = []
 
             for result in results:
                 entity_value = item_text[result.start:result.end]
