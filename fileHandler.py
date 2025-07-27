@@ -1,222 +1,196 @@
-import os, string, sys, tempfile
-try: from ocr_utils import image_to_text, pdf_to_text
+import os
+import sys
+import tempfile
+import shutil
+from datetime import datetime
+from typing import Iterator
+
+try:
+    from ocr_utils import image_to_text, pdf_to_text
 except ImportError:
-    print("ERROR: Could not import OCR functions from 'ocr_utils.py'.")
-    print(
-        "Please ensure 'ocr_utils.py' is in the same directory and necessary libraries (Pillow, pytesseract, pdf2image, reportlab) are installed.")
-    sys.exit(1)
-try: from gitHandler import clone_repository, cleanup_repository
-except ImportError:
-    print("ERROR: Could not import GitHub functions from 'gitHandler.py'.")
-    print("Please ensure 'gitHandler.py' is in the same directory and Git is installed.")
+    print("ERROR: Could not import 'ocr_utils'. Please ensure dependencies are installed.")
     sys.exit(1)
 
-TEXT_EXTENSIONS = ('.txt', '.TXT', '.log', '.csv', '.json', '.xml', '.html', '.py', '.md', '.yml', '.ini', '')
+try:
+    from gitHandler import clone_repository, cleanup_repository
+except ImportError:
+    print("ERROR: Could not import 'gitHandler'. Please ensure Git is installed and the handler is present.")
+    sys.exit(1)
+
+TEXT_EXTENSIONS = ('.txt', '.log', '.csv', '.json', '.xml', '.html', '.py', '.md', '.yml', '.ini', '')
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp')
 PDF_EXTENSIONS = ('.pdf',)
 ALL_SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS + IMAGE_EXTENSIONS + PDF_EXTENSIONS
 
+
+class FileModificationError(Exception):
+    pass
+
+
+class FileWriter:
+    def __init__(self, target_path, create_backup=True, mode='w', backup_dir=None):
+        self.target_path = target_path
+        self.create_backup = create_backup
+        self.mode = mode  # 'w' for overwrite, 'a' for append
+        self.backup_dir = backup_dir or os.path.dirname(target_path)
+        self.backup_path = None
+        self.temp_path = None
+        self.temp_file = None
+
+    def __enter__(self):
+        if self.create_backup and os.path.exists(self.target_path):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_filename = f"{os.path.basename(self.target_path)}.backup_{timestamp}"
+            self.backup_path = os.path.join(self.backup_dir, backup_filename)
+            shutil.copy2(self.target_path, self.backup_path)
+
+        target_dir = os.path.dirname(os.path.abspath(self.target_path))
+        self.temp_file = tempfile.NamedTemporaryFile(
+            mode=self.mode,
+            dir=target_dir,
+            delete=False,
+            encoding='utf-8',
+            prefix=f".tmp_{os.path.basename(self.target_path)}_",
+            suffix='.tmp'
+        )
+        self.temp_path = self.temp_file.name
+        return self.temp_file
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.temp_file:
+            self.temp_file.close()
+        if exc_type is None:
+            try:
+                os.replace(self.temp_path, self.target_path)
+            except Exception as e:
+                if self.temp_path and os.path.exists(self.temp_path):
+                    os.remove(self.temp_path)
+                raise FileModificationError(f"Failed to update file {self.target_path}: {e}")
+        else:
+            if self.temp_path and os.path.exists(self.temp_path):
+                os.remove(self.temp_path)
+
+    def rollback(self):
+        if self.backup_path and os.path.exists(self.backup_path):
+            shutil.copy2(self.backup_path, self.target_path)
+            print(f"File restoration from backup succeeded: {self.backup_path}")
+            return True
+        return False
+
+
 def get_files(input_path: str) -> list[str]:
-    """
-    Returns a list of paths to all non-empty files of supported types
-    inside the given directory and its subdirectories.
-
-    Args:
-        input_path (str): The path to the directory to search.
-
-    Returns:
-        list[str]: A list of absolute file paths.
-                   Exits with an error if the input path does not exist
-                   or is not a directory.
-    """
     filepaths = []
-
     if not os.path.exists(input_path):
         print(f"ERROR: Path does not exist: {input_path}")
         sys.exit(2)
     elif not os.path.isdir(input_path):
-        print(f"Input must be a directory: {input_path}")
+        print(f"ERROR: Provided path is not a directory: {input_path}")
         sys.exit(2)
 
     for root, _, files in os.walk(input_path):
         for file in files:
+            if file.startswith('.') or file == '.DS_Store':  # exclude hidden and macOS system files
+                continue
             file_path = os.path.join(root, file)
-            if file.lower().endswith(ALL_SUPPORTED_EXTENSIONS) and os.path.getsize(file_path) > 0:
+            if file_path.lower().endswith(ALL_SUPPORTED_EXTENSIONS) and os.path.getsize(file_path) > 0:
                 filepaths.append(file_path)
     return filepaths
 
 
-def get_data(input_source: str) -> list[str]:
-    """
-    Reads all text files, extracts text from image files, and extracts text from PDF files
-    from the specified input source (either a local directory path or a GitHub URL).
-    Returns the full text content of each processed file.
-
-    Args:
-        input_source (str): The path to a local directory or a GitHub repository URL.
-
-    Returns:
-        list[str]: A list of strings, where each string is the full text content
-                   of a readable file (text, image-extracted, or PDF-extracted).
-                   Returns an empty list if the input source is invalid or
-                   contains no readable files.
-    """
-    all_processed_contents = []
-
-    is_github_url = input_source.startswith("http://") or input_source.startswith("https://")
-
-    local_dir_to_scan = input_source
+def get_data_with_paths(input_source: str) -> Iterator[tuple[str, str]]:
+    is_github_url = input_source.startswith(("http://", "https://"))
+    local_dir = input_source
     temp_dir = None
 
     if is_github_url:
-        print(f"Input is a GitHub URL: {input_source}")
         temp_dir = tempfile.mkdtemp(prefix="pii_repo_")
-        print(f"Cloning repository to temporary directory: {temp_dir}")
         if not clone_repository(input_source, temp_dir):
-            print(f"Error: Failed to clone repository from {input_source}. Cannot proceed with analysis.")
             if temp_dir:
                 cleanup_repository(temp_dir)
-            return []
-        local_dir_to_scan = temp_dir
-    else:
-        print(f"Input is a local directory path: {input_source}")
-        if not os.path.exists(input_source) or not os.path.isdir(input_source):
-            print(f"Error: Local directory '{input_source}' does not exist or is not a directory.")
-            return []
+            return  # yield nothing
+        local_dir = temp_dir
+
+    if not os.path.isdir(local_dir):
+        print(f"ERROR: Path is not a directory: {local_dir}")
+        return  # yield nothing
 
     try:
-        paths = get_files(local_dir_to_scan)
-
-        if not paths:
-            print(f"No supported non-empty files found in {local_dir_to_scan}")
-            return []
-
-        for file_path in paths:
-            file_extension = os.path.splitext(file_path)[1].lower()
-            content = None
-
-            if file_extension in TEXT_EXTENSIONS:
-                print(f"  Attempting to read text file: {file_path}")
-                encodings_to_try = ['utf-8', 'latin-1', 'cp1252']
-                for encoding in encodings_to_try:
-                    try:
-                        with open(file_path, 'r', encoding=encoding) as f:
-                            content = f.read()
-                        print(f"    Successfully read with encoding: {encoding}")
-                        break
-                    except UnicodeDecodeError:
-                        print(f"    Failed to decode with {encoding}. Trying next encoding...")
-                    except Exception as e:
-                        print(f"    An unexpected error occurred while reading {file_path} with {encoding}: {e}")
-                        break
-
-                if content is None:
-                    print(
-                        f"  Warning: Could not decode text file {file_path} with any of the tried encodings. Skipping.")
-
-            elif file_extension in IMAGE_EXTENSIONS:
-                print(f"  Attempting to extract text from image file: {file_path}")
-                extracted_image_text = image_to_text(file_path)
-                if extracted_image_text:
-                    content = extracted_image_text
-                    print(f"    Successfully extracted text from image.")
-                else:
-                    print(
-                        f"  Warning: No text extracted from image file {file_path} or an OCR error occurred. Skipping.")
-
-            elif file_extension in PDF_EXTENSIONS:
-                print(f"  Attempting to extract text from PDF file: {file_path}")
-                extracted_pdf_text = pdf_to_text(file_path)
-                if extracted_pdf_text:
-                    content = extracted_pdf_text
-                    print(f"    Successfully extracted text from PDF.")
-                else:
-                    print(f"  Warning: No text extracted from PDF file {file_path} or an OCR error occurred. Skipping.")
-            else:
-                print(f"  Skipping unsupported file type: {file_path}")
+        files = get_files(local_dir)
+        for fp in files:
+            if os.path.basename(fp).startswith('.') or os.path.basename(fp).lower() == '.ds_store':
+                continue  # skip hidden/system files
+            ext = os.path.splitext(fp)[1].lower()
+            if ext not in TEXT_EXTENSIONS:
                 continue
-
+            content = None
+            for enc in ['utf-8', 'latin-1', 'cp1252']:
+                try:
+                    with open(fp, 'r', encoding=enc) as f:
+                        content = f.read()
+                    break
+                except Exception:
+                    continue
             if content is not None:
-                all_processed_contents.append(content)
-
-        return all_processed_contents
+                yield (fp, content)
     finally:
         if temp_dir:
             cleanup_repository(temp_dir)
 
-# Test
-"""
-if __name__ == "__main__":
-    test_dir = "test_data_combined"
-    os.makedirs(test_dir, exist_ok=True)
 
-    with open(os.path.join(test_dir, "file1.txt"), "w", encoding="utf-8") as f:
-        f.write("This is a sample UTF-8 text with some PII like email@example.com and phone 123-456-7890. John Doe.")
-
+def modify_files_remove_pii(input_source: str, anonymized_results: list, create_backup=True, append=False) -> dict:
+    results = {
+        'modified': [],
+        'backup': [],
+        'errors': [],
+        'skipped': []
+    }
     try:
-        with open(os.path.join(test_dir, "file2_latin1.txt"), "w", encoding="latin-1") as f:
-            f.write("This file has a special character: é and a name Jane Smith. The quick brown fox.")
-    except Exception as e:
-        print(f"Could not create latin-1 file (might not be supported on your system): {e}")
+        files_with_content = list(get_data_with_paths(input_source))
 
-    with open(os.path.join(test_dir, "file3.log"), "w", encoding="utf-8") as f:
-        f.write("Another text with a credit card number 1234-5678-9012-3456. And a password: MyStrongP@ssw0rd!")
+        if not files_with_content:
+            results['errors'].append("No text files found.")
+            return results
 
-    try:
-        from PIL import Image, ImageDraw, ImageFont
+        if len(anonymized_results) != len(files_with_content):
+            results['errors'].append(f"Number of anonymized results ({len(anonymized_results)}) does not match number of files ({len(files_with_content)}).")
+            return results
 
-        img_test_path = os.path.join(test_dir, "dummy_image_for_ocr.png")
-        img_test = Image.new('RGB', (200, 50), color=(255, 255, 255))
-        d = ImageDraw.Draw(img_test)
-        try:
-            fnt = ImageFont.truetype("arial.ttf", 20)
-        except IOError:
+        # Always open temp files in write mode; we handle append manually by content concat
+        mode = 'w'
+
+        for i, (file_path, original_content) in enumerate(files_with_content):
             try:
-                fnt = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 20)
-            except IOError:
-                fnt = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
-            except IOError:
-                fnt = ImageFont.load_default()
+                anonymized_content = anonymized_results[i]
 
-        d.text((10, 10), "Image Text 789", fill=(0, 0, 0), font=fnt)
-        img_test.save(img_test_path)
-        print(f"Created dummy image for OCR: {img_test_path}")
-    except ImportError:
-        print("Pillow not installed, skipping dummy image creation for OCR test.")
+                # If appending, combine old + new; else just new
+                if append:
+                    combined_content = original_content + "\n" + anonymized_content
+                else:
+                    combined_content = anonymized_content
+
+                # Skip rewriting if no changes and not appending
+                if not append and original_content.strip() == anonymized_content.strip():
+                    results['skipped'].append(file_path)
+                    continue
+
+                with FileWriter(file_path, create_backup=create_backup, mode=mode) as f:
+                    f.write(combined_content)
+
+                results['modified'].append(file_path)
+
+                if create_backup:
+                    backup_path = None
+                    backup_files = [f for f in os.listdir(os.path.dirname(file_path))
+                                    if f.startswith(os.path.basename(file_path)) and 'backup' in f]
+                    if backup_files:
+                        backup_files.sort()
+                        backup_path = os.path.join(os.path.dirname(file_path), backup_files[-1])
+                        results['backup'].append(backup_path)
+
+            except Exception as e:
+                results['errors'].append(f"Failed modifying {file_path}: {e}")
+
     except Exception as e:
-        print(f"Error creating dummy image for OCR: {e}")
+        results['errors'].append(f"Failed during file modification: {e}")
 
-    dummy_pdf_path = os.path.join(test_dir, "dummy_document_for_ocr.pdf")
-    try:
-        from ocr_utils import create_dummy_pdf
-
-        pdf_content = "This is PDF text. It has a social security number 999-88-7777."
-        create_dummy_pdf(dummy_pdf_path, pdf_content, include_image=True, image_path=img_test_path)
-        print(f"Created dummy PDF for OCR: {dummy_pdf_path}")
-    except ImportError:
-        print("Required libraries for PDF creation (reportlab, pdf2image) not installed, skipping dummy PDF creation.")
-    except Exception as e:
-        print(f"Error creating dummy PDF: {e}")
-
-    print("\n--- Test get_data function with combined text, image, and PDF processing (local) ---")
-    data = get_data(test_dir)
-    print("\nFull Contents from local files:")
-    for i, content in enumerate(data):
-        print(f"--- File {i + 1} ---\n{content}\n-----------------")
-
-    print("\n--- Test get_data function with GitHub URL (expected to clone git/git.git) ---")
-    github_test_url = "https://github.com/git/git.git"
-    github_data = get_data(github_test_url)
-    print("\nFull Contents from GitHub repository (first 2 items):")
-    if github_data:
-        for i, content in enumerate(github_data[:2]):  
-            print(f"--- GitHub File {i + 1} ---\n{content}\n-----------------")
-        if len(github_data) > 2:
-            print(f"... and {len(github_data) - 2} more files.")
-    else:
-        print("No data extracted from GitHub repository.")
-    import shutil
-    if os.path.exists(test_dir):
-        shutil.rmtree(test_dir)
-        print(f"\nCleaned up {test_dir}")
-"""
+    return results
