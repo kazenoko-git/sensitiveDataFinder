@@ -1,6 +1,8 @@
 # sensitiveDataFinder
 ### An easy way to scan multiple directories and get sensitive data.
 
+<img width="1112" height="840" alt="image" src="https://github.com/user-attachments/assets/55c6bffe-07fa-48b5-bec7-2f4f4d480ce6" />
+
 ## Requirements
 * Install the primary requiremnts
   `pip install -r requirements.txt`
